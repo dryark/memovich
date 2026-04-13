@@ -34,5 +34,8 @@ coverage.xml
 .venv/
 venv/
 
+# uv
+uv.lock
+
 # ChromaDB local data
 *.sqlite3-journal

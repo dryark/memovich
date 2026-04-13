@@ -422,7 +422,7 @@ Now queries for Kai's current work won't return Orion. Historical queries still 
 
 ## Specialist Agents
 
-Create agents that focus on specific areas. Each agent gets its own wing and diary in the palace — not in your CLAUDE.md. Add 50 agents, your config stays the same size.
+Create agents that focus on specific areas. Each agent gets its own wing and diary in the palace — not in one giant global instructions file. Add 50 agents, your config stays the same size.
 
 ```
 ~/.mempalace/agents/
@@ -431,7 +431,7 @@ Create agents that focus on specific areas. Each agent gets its own wing and dia
   └── ops.json            # deploys, incidents, infra
 ```
 
-Your CLAUDE.md just needs one line:
+Your agent instructions just need one line:
 
 ```
 You have MemPalace agents. Run mempalace_list_agents to see them.
@@ -715,7 +715,7 @@ pip install mempalace
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
+PRs welcome. For local development: `pip install -e ".[dev]"`, then `python -m pytest tests/ -v --ignore=tests/benchmarks` and `ruff check .`.
 
 ## License
 
