@@ -67,6 +67,14 @@ class ChromaCollection(BaseCollection):
     def count(self):
         return self._collection.count()
 
+    def update(self, *, ids, documents=None, metadatas=None):
+        kwargs = {"ids": ids}
+        if documents is not None:
+            kwargs["documents"] = documents
+        if metadatas is not None:
+            kwargs["metadatas"] = metadatas
+        self._collection.update(**kwargs)
+
 
 class ChromaBackend:
     """Factory for MemPalace's default ChromaDB backend."""
@@ -85,7 +93,9 @@ class ChromaBackend:
         _fix_blob_seq_ids(palace_path)
         client = chromadb.PersistentClient(path=palace_path)
         if create:
-            collection = client.get_or_create_collection(collection_name)
+            collection = client.get_or_create_collection(
+                collection_name, metadata={"hnsw:space": "cosine"}
+            )
         else:
             collection = client.get_collection(collection_name)
         return ChromaCollection(collection)

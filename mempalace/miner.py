@@ -15,6 +15,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+from .metadata_keys import NAMESPACE, SEGMENT
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 
 READABLE_EXTENSIONS = {
@@ -368,28 +369,36 @@ def chunk_text(content: str, source_file: str) -> list:
 # =============================================================================
 
 
-def add_drawer(
-    collection, wing: str, room: str, content: str, source_file: str, chunk_index: int, agent: str
+def add_chunk(
+    collection,
+    namespace: str,
+    segment: str,
+    content: str,
+    source_file: str,
+    chunk_index: int,
+    agent: str,
 ):
-    """Add one drawer to the palace."""
-    drawer_id = f"drawer_{wing}_{room}_{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
+    """Add one chunk to the vector store."""
+    chunk_id = (
+        f"chunk_{namespace}_{segment}_"
+        f"{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
+    )
     try:
         metadata = {
-            "wing": wing,
-            "room": room,
+            NAMESPACE: namespace,
+            SEGMENT: segment,
             "source_file": source_file,
             "chunk_index": chunk_index,
             "added_by": agent,
             "filed_at": datetime.now().isoformat(),
         }
-        # Store file mtime so we can detect modifications later.
         try:
             metadata["source_mtime"] = os.path.getmtime(source_file)
         except OSError:
             pass
         collection.upsert(
             documents=[content],
-            ids=[drawer_id],
+            ids=[chunk_id],
             metadatas=[metadata],
         )
         return True
@@ -406,12 +415,12 @@ def process_file(
     filepath: Path,
     project_path: Path,
     collection,
-    wing: str,
-    rooms: list,
+    namespace: str,
+    segments: list,
     agent: str,
     dry_run: bool,
 ) -> tuple:
-    """Read, chunk, route, and file one file. Returns (drawer_count, room_name)."""
+    """Read, chunk, route, and file one file. Returns (chunk_count, segment_name)."""
 
     # Skip if already filed
     source_file = str(filepath)
@@ -427,12 +436,12 @@ def process_file(
     if len(content) < MIN_CHUNK_SIZE:
         return 0, "general"
 
-    room = detect_room(filepath, content, rooms, project_path)
+    segment = detect_room(filepath, content, segments, project_path)
     chunks = chunk_text(content, source_file)
 
     if dry_run:
-        print(f"    [DRY RUN] {filepath.name} → room:{room} ({len(chunks)} drawers)")
-        return len(chunks), room
+        print(f"    [DRY RUN] {filepath.name} → segment:{segment} ({len(chunks)} chunks)")
+        return len(chunks), segment
 
     # Purge stale drawers for this file before re-inserting the fresh chunks.
     # Converts modified-file re-mines from upsert-over-existing-IDs (which hits
@@ -444,21 +453,21 @@ def process_file(
     except Exception:
         pass
 
-    drawers_added = 0
+    chunks_added = 0
     for chunk in chunks:
-        added = add_drawer(
+        added = add_chunk(
             collection=collection,
-            wing=wing,
-            room=room,
+            namespace=namespace,
+            segment=segment,
             content=chunk["content"],
             source_file=source_file,
             chunk_index=chunk["chunk_index"],
             agent=agent,
         )
         if added:
-            drawers_added += 1
+            chunks_added += 1
 
-    return drawers_added, room
+    return chunks_added, segment
 
 
 # =============================================================================
@@ -538,20 +547,20 @@ def scan_project(
 def mine(
     project_dir: str,
     palace_path: str,
-    wing_override: str = None,
+    namespace_override: str = None,
     agent: str = "mempalace",
     limit: int = 0,
     dry_run: bool = False,
     respect_gitignore: bool = True,
     include_ignored: list = None,
 ):
-    """Mine a project directory into the palace."""
+    """Mine a project directory into the vector store."""
 
     project_path = Path(project_dir).expanduser().resolve()
     config = load_config(project_dir)
 
-    wing = wing_override or config["wing"]
-    rooms = config.get("rooms", [{"name": "general", "description": "All project files"}])
+    namespace = namespace_override or config["namespace"]
+    segments = config.get("segments", [{"name": "general", "description": "All project files"}])
 
     files = scan_project(
         project_dir,
@@ -564,8 +573,8 @@ def mine(
     print(f"\n{'=' * 55}")
     print("  MemPalace Mine")
     print(f"{'=' * 55}")
-    print(f"  Wing:    {wing}")
-    print(f"  Rooms:   {', '.join(r['name'] for r in rooms)}")
+    print(f"  Namespace: {namespace}")
+    print(f"  Segments:  {', '.join(r['name'] for r in segments)}")
     print(f"  Files:   {len(files)}")
     print(f"  Palace:  {palace_path}")
     if dry_run:
@@ -586,22 +595,22 @@ def mine(
     room_counts = defaultdict(int)
 
     for i, filepath in enumerate(files, 1):
-        drawers, room = process_file(
+        chunks_n, seg = process_file(
             filepath=filepath,
             project_path=project_path,
             collection=collection,
-            wing=wing,
-            rooms=rooms,
+            namespace=namespace,
+            segments=segments,
             agent=agent,
             dry_run=dry_run,
         )
-        if drawers == 0 and not dry_run:
+        if chunks_n == 0 and not dry_run:
             files_skipped += 1
         else:
-            total_drawers += drawers
-            room_counts[room] += 1
+            total_drawers += chunks_n
+            room_counts[seg] += 1
             if not dry_run:
-                print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers}")
+                print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{chunks_n}")
 
     print(f"\n{'=' * 55}")
     print("  Done.")
@@ -634,16 +643,16 @@ def status(palace_path: str):
     r = col.get(limit=total, include=["metadatas"]) if total else {"metadatas": []}
     metas = r["metadatas"]
 
-    wing_rooms = defaultdict(lambda: defaultdict(int))
+    ns_seg = defaultdict(lambda: defaultdict(int))
     for m in metas:
-        wing_rooms[m.get("wing", "?")][m.get("room", "?")] += 1
+        ns_seg[m.get(NAMESPACE, "?")][m.get(SEGMENT, "?")] += 1
 
     print(f"\n{'=' * 55}")
-    print(f"  MemPalace Status — {len(metas)} drawers")
+    print(f"  MemPalace Status — {len(metas)} chunks")
     print(f"{'=' * 55}\n")
-    for wing, rooms in sorted(wing_rooms.items()):
-        print(f"  WING: {wing}")
-        for room, count in sorted(rooms.items(), key=lambda x: x[1], reverse=True):
-            print(f"    ROOM: {room:20} {count:5} drawers")
+    for ns, segs in sorted(ns_seg.items()):
+        print(f"  NAMESPACE: {ns}")
+        for seg, count in sorted(segs.items(), key=lambda x: x[1], reverse=True):
+            print(f"    SEGMENT: {seg:20} {count:5} chunks")
         print()
     print(f"{'=' * 55}\n")

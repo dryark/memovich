@@ -21,17 +21,19 @@ _session_tmp = tempfile.mkdtemp(prefix="mempalace_session_")
 for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
     _original_env[_var] = os.environ.get(_var)
 
+os.environ.setdefault("MEMPALACE_VECTOR_BACKEND", "memory")
+
 os.environ["HOME"] = _session_tmp
 os.environ["USERPROFILE"] = _session_tmp
 os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
+from mempalace.palace import get_collection  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -41,9 +43,13 @@ def _reset_mcp_cache():
     def _clear_cache():
         try:
             from mempalace import mcp_server
+            from mempalace.palace import invalidate_vector_backend_cache
 
-            mcp_server._client_cache = None
+            invalidate_vector_backend_cache()
             mcp_server._collection_cache = None
+            mcp_server._storage_sig = None
+            mcp_server._metadata_cache = None
+            mcp_server._metadata_cache_time = 0
         except (ImportError, AttributeError):
             pass
 
@@ -98,24 +104,22 @@ def config(tmp_dir, palace_path):
 
 
 @pytest.fixture
-def collection(palace_path):
-    """A ChromaDB collection pre-seeded in the temp palace."""
-    client = chromadb.PersistentClient(path=palace_path)
-    col = client.get_or_create_collection("mempalace_drawers")
+def collection(palace_path, config):
+    """Vector collection in the temp palace (memory backend in tests by default)."""
+    col = get_collection(palace_path, create=True, config=config)
     yield col
-    client.delete_collection("mempalace_drawers")
-    del client
+    col.delete()
 
 
 @pytest.fixture
 def seeded_collection(collection):
-    """Collection with a handful of representative drawers."""
+    """Collection with a handful of representative chunks."""
     collection.add(
         ids=[
-            "drawer_proj_backend_aaa",
-            "drawer_proj_backend_bbb",
-            "drawer_proj_frontend_ccc",
-            "drawer_notes_planning_ddd",
+            "chunk_proj_backend_aaa",
+            "chunk_proj_backend_bbb",
+            "chunk_proj_frontend_ccc",
+            "chunk_notes_planning_ddd",
         ],
         documents=[
             "The authentication module uses JWT tokens for session management. "
@@ -129,32 +133,32 @@ def seeded_collection(collection):
         ],
         metadatas=[
             {
-                "wing": "project",
-                "room": "backend",
+                "namespace": "project",
+                "segment": "backend",
                 "source_file": "auth.py",
                 "chunk_index": 0,
                 "added_by": "miner",
                 "filed_at": "2026-01-01T00:00:00",
             },
             {
-                "wing": "project",
-                "room": "backend",
+                "namespace": "project",
+                "segment": "backend",
                 "source_file": "db.py",
                 "chunk_index": 0,
                 "added_by": "miner",
                 "filed_at": "2026-01-02T00:00:00",
             },
             {
-                "wing": "project",
-                "room": "frontend",
+                "namespace": "project",
+                "segment": "frontend",
                 "source_file": "App.tsx",
                 "chunk_index": 0,
                 "added_by": "miner",
                 "filed_at": "2026-01-03T00:00:00",
             },
             {
-                "wing": "notes",
-                "room": "planning",
+                "namespace": "notes",
+                "segment": "planning",
                 "source_file": "sprint.md",
                 "chunk_index": 0,
                 "added_by": "miner",

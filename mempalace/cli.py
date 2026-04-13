@@ -77,7 +77,7 @@ def cmd_mine(args):
         mine_convos(
             convo_dir=args.dir,
             palace_path=palace_path,
-            wing=args.wing,
+            namespace=args.namespace,
             agent=args.agent,
             limit=args.limit,
             dry_run=args.dry_run,
@@ -89,7 +89,7 @@ def cmd_mine(args):
         mine(
             project_dir=args.dir,
             palace_path=palace_path,
-            wing_override=args.wing,
+            namespace_override=args.namespace,
             agent=args.agent,
             limit=args.limit,
             dry_run=args.dry_run,
@@ -106,8 +106,8 @@ def cmd_search(args):
         search(
             query=args.query,
             palace_path=palace_path,
-            wing=args.wing,
-            room=args.room,
+            namespace=args.namespace,
+            segment=args.segment,
             n_results=args.results,
         )
     except SearchError:
@@ -121,7 +121,7 @@ def cmd_wakeup(args):
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
     stack = MemoryStack(palace_path=palace_path)
 
-    text = stack.wake_up(wing=args.wing)
+    text = stack.wake_up(namespace=args.namespace)
     tokens = len(text) // 4
     print(f"Wake-up text (~{tokens} tokens):")
     print("=" * 50)
@@ -167,13 +167,22 @@ def cmd_status(args):
 
 
 def cmd_repair(args):
-    """Rebuild palace vector index from SQLite metadata."""
-    import chromadb
+    """Rebuild palace vector index from SQLite metadata (Chroma backend only)."""
     import shutil
+
+    cfg = MempalaceConfig()
+    if cfg.vector_backend != "chroma":
+        print(
+            f"\n  repair is only implemented for vector_backend=chroma (yours: {cfg.vector_backend!r})."
+        )
+        print("  For Postgres, run REINDEX / VACUUM on your chunk tables as needed.")
+        return
+
+    import chromadb
     from .migrate import confirm_destructive_action, contains_palace_database
 
     palace_path = os.path.abspath(
-        os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+        os.path.expanduser(args.palace) if args.palace else cfg.palace_path
     )
     db_path = os.path.join(palace_path, "chroma.sqlite3")
 
@@ -292,11 +301,13 @@ def cmd_mcp(args):
 
 
 def cmd_compress(args):
-    """Compress drawers in a wing using AAAK Dialect."""
-    import chromadb
+    """Compress chunks in a namespace using AAAK Dialect."""
     from .dialect import Dialect
+    from .metadata_keys import NAMESPACE, SEGMENT
+    from .palace import get_collection
 
-    palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+    cfg = MempalaceConfig()
+    palace_path = os.path.expanduser(args.palace) if args.palace else cfg.palace_path
 
     # Load dialect (with optional entity config)
     config_path = args.config
@@ -312,17 +323,16 @@ def cmd_compress(args):
     else:
         dialect = Dialect()
 
-    # Connect to palace
     try:
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers")
+        col = get_collection(
+            palace_path, collection_name=cfg.collection_name, create=False, config=cfg
+        )
     except Exception:
-        print(f"\n  No palace found at {palace_path}")
+        print(f"\n  No memory store found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")
         sys.exit(1)
 
-    # Query drawers in batches to avoid SQLite variable limit (~999)
-    where = {"wing": args.wing} if args.wing else None
+    where = {NAMESPACE: args.namespace} if args.namespace else None
     _BATCH = 500
     docs, metas, ids = [], [], []
     offset = 0
@@ -348,13 +358,13 @@ def cmd_compress(args):
             break
 
     if not docs:
-        wing_label = f" in wing '{args.wing}'" if args.wing else ""
-        print(f"\n  No drawers found{wing_label}.")
+        ns_label = f" in namespace '{args.namespace}'" if args.namespace else ""
+        print(f"\n  No chunks found{ns_label}.")
         return
 
     print(
-        f"\n  Compressing {len(docs)} drawers"
-        + (f" in wing '{args.wing}'" if args.wing else "")
+        f"\n  Compressing {len(docs)} chunks"
+        + (f" in namespace '{args.namespace}'" if args.namespace else "")
         + "..."
     )
     print()
@@ -373,20 +383,24 @@ def cmd_compress(args):
         compressed_entries.append((doc_id, compressed, meta, stats))
 
         if args.dry_run:
-            wing_name = meta.get("wing", "?")
-            room_name = meta.get("room", "?")
+            ns_name = meta.get(NAMESPACE, "?")
+            seg_name = meta.get(SEGMENT, "?")
             source = Path(meta.get("source_file", "?")).name
-            print(f"  [{wing_name}/{room_name}] {source}")
+            print(f"  [{ns_name}/{seg_name}] {source}")
             print(
                 f"    {stats['original_tokens_est']}t -> {stats['summary_tokens_est']}t ({stats['size_ratio']:.1f}x)"
             )
             print(f"    {compressed}")
             print()
 
-    # Store compressed versions (unless dry-run)
     if not args.dry_run:
         try:
-            comp_col = client.get_or_create_collection("mempalace_compressed")
+            comp_col = get_collection(
+                palace_path,
+                collection_name="mempalace_compressed",
+                create=True,
+                config=cfg,
+            )
             for doc_id, compressed, meta, stats in compressed_entries:
                 comp_meta = dict(meta)
                 comp_meta["compression_ratio"] = round(stats["size_ratio"], 1)
@@ -397,10 +411,10 @@ def cmd_compress(args):
                     metadatas=[comp_meta],
                 )
             print(
-                f"  Stored {len(compressed_entries)} compressed drawers in 'mempalace_compressed' collection."
+                f"  Stored {len(compressed_entries)} compressed chunks in collection 'mempalace_compressed'."
             )
         except Exception as e:
-            print(f"  Error storing compressed drawers: {e}")
+            print(f"  Error storing compressed chunks: {e}")
             sys.exit(1)
 
     # Summary
@@ -443,7 +457,11 @@ def main():
         default="projects",
         help="Ingest mode: 'projects' for code/docs (default), 'convos' for chat exports",
     )
-    p_mine.add_argument("--wing", default=None, help="Wing name (default: directory name)")
+    p_mine.add_argument(
+        "--namespace",
+        default=None,
+        help="Namespace (default: from mempalace.yaml or directory name)",
+    )
     p_mine.add_argument(
         "--no-gitignore",
         action="store_true",
@@ -474,15 +492,17 @@ def main():
     # search
     p_search = sub.add_parser("search", help="Find anything, exact words")
     p_search.add_argument("query", help="What to search for")
-    p_search.add_argument("--wing", default=None, help="Limit to one project")
-    p_search.add_argument("--room", default=None, help="Limit to one room")
+    p_search.add_argument("--namespace", default=None, help="Limit to one namespace (project)")
+    p_search.add_argument("--segment", default=None, help="Limit to one segment (aspect)")
     p_search.add_argument("--results", type=int, default=5, help="Number of results")
 
     # compress
     p_compress = sub.add_parser(
         "compress", help="Compress drawers using AAAK Dialect (~30x reduction)"
     )
-    p_compress.add_argument("--wing", default=None, help="Wing to compress (default: all wings)")
+    p_compress.add_argument(
+        "--namespace", default=None, help="Namespace to compress (default: all namespaces)"
+    )
     p_compress.add_argument(
         "--dry-run", action="store_true", help="Preview compression without storing"
     )
@@ -492,7 +512,9 @@ def main():
 
     # wake-up
     p_wakeup = sub.add_parser("wake-up", help="Show L0 + L1 wake-up context (~600-900 tokens)")
-    p_wakeup.add_argument("--wing", default=None, help="Wake-up for a specific project/wing")
+    p_wakeup.add_argument(
+        "--namespace", default=None, help="Wake-up scoped to a specific namespace (project)"
+    )
 
     # split
     p_split = sub.add_parser(

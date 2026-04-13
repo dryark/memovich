@@ -3,7 +3,24 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mempalace.layers import Layer0, Layer1, Layer2, Layer3, MemoryStack
+
+
+@pytest.fixture(autouse=True)
+def _stub_tier_preset():
+    """Avoid loading real YAML while MempalaceConfig is mocked in unit tests."""
+    hot = MagicMock()
+    hot.role = "hot_window"
+    hot.max_scan = 2000
+    hot.max_chunks = 15
+    hot.max_chars = 3200
+    hot.group_by = "segment"
+    preset = MagicMock()
+    preset.tiers = [hot]
+    with patch("mempalace.layers.load_tier_preset", return_value=preset):
+        yield
 
 
 # ── Layer0 — with identity file ─────────────────────────────────────────
@@ -83,11 +100,14 @@ def _mock_chromadb_for_layer(docs, metas, monkeypatch=None):
 
 def test_layer1_no_palace():
     """Layer1 returns helpful message when no palace exists."""
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer1(palace_path="/nonexistent/palace")
-    result = layer.generate()
-    assert "No palace found" in result or "No memories" in result
+        result = layer.generate()
+    assert "No memory store found" in result or "No memories" in result
 
 
 def test_layer1_generates_essential_story():
@@ -96,8 +116,8 @@ def test_layer1_generates_essential_story():
         "Key architectural choice for the backend",
     ]
     metas = [
-        {"room": "decisions", "source_file": "meeting.txt", "importance": 5},
-        {"room": "architecture", "source_file": "design.txt", "importance": 4},
+        {"segment": "decisions", "source_file": "meeting.txt", "importance": 5},
+        {"segment": "architecture", "source_file": "design.txt", "importance": 4},
     ]
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
@@ -127,9 +147,9 @@ def test_layer1_empty_palace():
     assert "No memories" in result
 
 
-def test_layer1_with_wing_filter():
+def test_layer1_with_namespace_filter():
     docs = ["Memory about project X"]
-    metas = [{"room": "general", "source_file": "x.txt", "importance": 3}]
+    metas = [{"segment": "general", "source_file": "x.txt", "importance": 3}]
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
@@ -137,18 +157,18 @@ def test_layer1_with_wing_filter():
         patch("mempalace.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
-        layer = Layer1(palace_path="/fake", wing="project_x")
+        layer = Layer1(palace_path="/fake", namespace="project_x")
         result = layer.generate()
 
     assert "ESSENTIAL STORY" in result
     # Verify wing filter was passed
     call_kwargs = mock_col.get.call_args_list[0][1]
-    assert call_kwargs.get("where") == {"wing": "project_x"}
+    assert call_kwargs.get("where") == {"namespace": "project_x"}
 
 
 def test_layer1_truncates_long_snippets():
     docs = ["A" * 300]
-    metas = [{"room": "general", "source_file": "long.txt"}]
+    metas = [{"segment": "general", "source_file": "long.txt"}]
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
@@ -163,18 +183,24 @@ def test_layer1_truncates_long_snippets():
 
 
 def test_layer1_respects_max_chars():
-    """L1 stops adding entries once MAX_CHARS is reached."""
+    """L1 stops adding entries once tier max_chars is reached."""
     docs = [f"Memory number {i} with substantial content padding here" for i in range(30)]
-    metas = [{"room": "general", "source_file": f"f{i}.txt", "importance": 5} for i in range(30)]
+    metas = [{"segment": "general", "source_file": f"f{i}.txt", "importance": 5} for i in range(30)]
     mock_col = _mock_chromadb_for_layer(docs, metas)
+
+    tier = MagicMock()
+    tier.max_scan = 2000
+    tier.max_chunks = 15
+    tier.max_chars = 200
+    tier.group_by = "segment"
 
     with (
         patch("mempalace.layers.MempalaceConfig") as mock_cfg,
         patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("mempalace.layers._hot_window_tier", return_value=tier),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
-        layer.MAX_CHARS = 200  # Very low cap to trigger truncation
         result = layer.generate()
 
     assert "more in L3 search" in result
@@ -184,9 +210,9 @@ def test_layer1_importance_from_various_keys():
     """Layer1 tries importance, emotional_weight, weight keys."""
     docs = ["mem1", "mem2", "mem3"]
     metas = [
-        {"room": "r", "emotional_weight": 5},
-        {"room": "r", "weight": 1},
-        {"room": "r"},  # no weight key, defaults to 3
+        {"segment": "r", "emotional_weight": 5},
+        {"segment": "r", "weight": 1},
+        {"segment": "r"},  # no weight key, defaults to 3
     ]
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
@@ -205,7 +231,7 @@ def test_layer1_batch_exception_breaks():
     """If col.get raises on a batch, loop breaks gracefully."""
     mock_col = MagicMock()
     mock_col.get.side_effect = [
-        {"documents": ["doc1"], "metadatas": [{"room": "r"}]},
+        {"documents": ["doc1"], "metadatas": [{"segment": "r"}]},
         RuntimeError("batch error"),
     ]
     with (
@@ -223,18 +249,21 @@ def test_layer1_batch_exception_breaks():
 
 
 def test_layer2_no_palace():
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer2(palace_path="/nonexistent/palace")
-    result = layer.retrieve(wing="test")
-    assert "No palace found" in result
+        result = layer.retrieve(namespace="test")
+    assert "No memory store found" in result
 
 
-def test_layer2_retrieve_with_wing():
+def test_layer2_retrieve_with_namespace():
     mock_col = MagicMock()
     mock_col.get.return_value = {
         "documents": ["Some memory about the project"],
-        "metadatas": [{"room": "backend", "source_file": "notes.txt"}],
+        "metadatas": [{"segment": "backend", "source_file": "notes.txt"}],
     }
     with (
         patch("mempalace.layers.MempalaceConfig") as mock_cfg,
@@ -242,7 +271,7 @@ def test_layer2_retrieve_with_wing():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(wing="project")
+        result = layer.retrieve(namespace="project")
 
     assert "ON-DEMAND" in result
     assert "memory about the project" in result
@@ -252,7 +281,7 @@ def test_layer2_retrieve_with_room():
     mock_col = MagicMock()
     mock_col.get.return_value = {
         "documents": ["Backend architecture notes"],
-        "metadatas": [{"room": "architecture", "source_file": "arch.txt"}],
+        "metadatas": [{"segment": "architecture", "source_file": "arch.txt"}],
     }
     with (
         patch("mempalace.layers.MempalaceConfig") as mock_cfg,
@@ -260,16 +289,16 @@ def test_layer2_retrieve_with_room():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(room="architecture")
+        result = layer.retrieve(segment="architecture")
 
     assert "ON-DEMAND" in result
 
 
-def test_layer2_retrieve_wing_and_room():
+def test_layer2_retrieve_namespace_and_segment():
     mock_col = MagicMock()
     mock_col.get.return_value = {
         "documents": ["Filtered result"],
-        "metadatas": [{"room": "backend", "source_file": "x.txt"}],
+        "metadatas": [{"segment": "backend", "source_file": "x.txt"}],
     }
     with (
         patch("mempalace.layers.MempalaceConfig") as mock_cfg,
@@ -277,7 +306,7 @@ def test_layer2_retrieve_wing_and_room():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(wing="proj", room="backend")
+        result = layer.retrieve(namespace="proj", segment="backend")
 
     assert "ON-DEMAND" in result
     call_kwargs = mock_col.get.call_args[1]
@@ -293,9 +322,9 @@ def test_layer2_retrieve_empty():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(wing="missing")
+        result = layer.retrieve(namespace="missing")
 
-    assert "No drawers found" in result
+    assert "No chunks found" in result
 
 
 def test_layer2_retrieve_no_filter():
@@ -323,7 +352,7 @@ def test_layer2_retrieve_error():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(wing="test")
+        result = layer.retrieve(namespace="test")
 
     assert "Retrieval error" in result
 
@@ -332,7 +361,7 @@ def test_layer2_truncates_long_snippets():
     mock_col = MagicMock()
     mock_col.get.return_value = {
         "documents": ["B" * 400],
-        "metadatas": [{"room": "r", "source_file": "s.txt"}],
+        "metadatas": [{"segment": "r", "source_file": "s.txt"}],
     }
     with (
         patch("mempalace.layers.MempalaceConfig") as mock_cfg,
@@ -340,7 +369,7 @@ def test_layer2_truncates_long_snippets():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
-        result = layer.retrieve(wing="test")
+        result = layer.retrieve(namespace="test")
 
     assert "..." in result
 
@@ -357,18 +386,24 @@ def _mock_query_results(docs, metas, dists):
 
 
 def test_layer3_no_palace():
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer3(palace_path="/nonexistent/palace")
-    result = layer.search("test query")
-    assert "No palace found" in result
+        result = layer.search("test query")
+    assert "No memory store found" in result
 
 
 def test_layer3_search_raw_no_palace():
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer3(palace_path="/nonexistent/palace")
-    result = layer.search_raw("test query")
+        result = layer.search_raw("test query")
     assert result == []
 
 
@@ -376,7 +411,7 @@ def test_layer3_search_with_results():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["Found this important memory"],
-        [{"wing": "project", "room": "backend", "source_file": "notes.txt"}],
+        [{"namespace": "project", "segment": "backend", "source_file": "notes.txt"}],
         [0.2],
     )
     with (
@@ -406,11 +441,11 @@ def test_layer3_search_no_results():
     assert "No results found" in result
 
 
-def test_layer3_search_with_wing_filter():
+def test_layer3_search_with_namespace_filter():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["result"],
-        [{"wing": "proj", "room": "r"}],
+        [{"namespace": "proj", "segment": "r"}],
         [0.1],
     )
     with (
@@ -419,17 +454,17 @@ def test_layer3_search_with_wing_filter():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
-        layer.search("q", wing="proj")
+        layer.search("q", namespace="proj")
 
     call_kwargs = mock_col.query.call_args[1]
-    assert call_kwargs["where"] == {"wing": "proj"}
+    assert call_kwargs["where"] == {"namespace": "proj"}
 
 
 def test_layer3_search_with_room_filter():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["result"],
-        [{"wing": "w", "room": "backend"}],
+        [{"namespace": "w", "segment": "backend"}],
         [0.1],
     )
     with (
@@ -438,17 +473,17 @@ def test_layer3_search_with_room_filter():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
-        layer.search("q", room="backend")
+        layer.search("q", segment="backend")
 
     call_kwargs = mock_col.query.call_args[1]
-    assert call_kwargs["where"] == {"room": "backend"}
+    assert call_kwargs["where"] == {"segment": "backend"}
 
 
-def test_layer3_search_with_wing_and_room():
+def test_layer3_search_with_namespace_and_segment():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["result"],
-        [{"wing": "proj", "room": "backend"}],
+        [{"namespace": "proj", "segment": "backend"}],
         [0.1],
     )
     with (
@@ -457,7 +492,7 @@ def test_layer3_search_with_wing_and_room():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
-        layer.search("q", wing="proj", room="backend")
+        layer.search("q", namespace="proj", segment="backend")
 
     call_kwargs = mock_col.query.call_args[1]
     assert "$and" in call_kwargs["where"]
@@ -481,7 +516,7 @@ def test_layer3_search_truncates_long_docs():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["C" * 400],
-        [{"wing": "w", "room": "r", "source_file": "s.txt"}],
+        [{"namespace": "w", "segment": "r", "source_file": "s.txt"}],
         [0.1],
     )
     with (
@@ -499,7 +534,7 @@ def test_layer3_search_raw_returns_dicts():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["doc text"],
-        [{"wing": "proj", "room": "backend", "source_file": "f.txt"}],
+        [{"namespace": "proj", "segment": "backend", "source_file": "f.txt"}],
         [0.3],
     )
     with (
@@ -512,7 +547,7 @@ def test_layer3_search_raw_returns_dicts():
 
     assert len(hits) == 1
     assert hits[0]["text"] == "doc text"
-    assert hits[0]["wing"] == "proj"
+    assert hits[0]["namespace"] == "proj"
     assert hits[0]["similarity"] == 0.7
     assert "metadata" in hits[0]
 
@@ -521,7 +556,7 @@ def test_layer3_search_raw_with_filters():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results(
         ["doc"],
-        [{"wing": "w", "room": "r"}],
+        [{"namespace": "w", "segment": "r"}],
         [0.1],
     )
     with (
@@ -530,7 +565,7 @@ def test_layer3_search_raw_with_filters():
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
-        layer.search_raw("q", wing="w", room="r")
+        layer.search_raw("q", namespace="w", segment="r")
 
     call_kwargs = mock_col.query.call_args[1]
     assert "$and" in call_kwargs["where"]
@@ -570,7 +605,7 @@ def test_memory_stack_wake_up(tmp_path):
     assert "No palace" in result or "No memories" in result
 
 
-def test_memory_stack_wake_up_with_wing(tmp_path):
+def test_memory_stack_wake_up_with_namespace(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
@@ -580,9 +615,9 @@ def test_memory_stack_wake_up_with_wing(tmp_path):
             palace_path="/nonexistent",
             identity_path=str(identity_file),
         )
-        result = stack.wake_up(wing="my_project")
+        result = stack.wake_up(namespace="my_project")
 
-    assert stack.l1.wing == "my_project"
+    assert stack.l1.namespace == "my_project"
     assert "Atlas" in result
 
 
@@ -590,22 +625,28 @@ def test_memory_stack_recall(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
             palace_path="/nonexistent",
             identity_path=str(identity_file),
         )
-        result = stack.recall(wing="test")
+        result = stack.recall(namespace="test")
 
-    assert "No palace found" in result
+    assert "No memory store found" in result
 
 
 def test_memory_stack_search(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with (
+        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
+        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+    ):
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
             palace_path="/nonexistent",
@@ -613,7 +654,7 @@ def test_memory_stack_search(tmp_path):
         )
         result = stack.search("test query")
 
-    assert "No palace found" in result
+    assert "No memory store found" in result
 
 
 def test_memory_stack_status(tmp_path):
@@ -629,7 +670,7 @@ def test_memory_stack_status(tmp_path):
         result = stack.status()
 
     assert result["palace_path"] == "/nonexistent"
-    assert result["total_drawers"] == 0
+    assert result["total_chunks"] == 0
     assert "L0_identity" in result
     assert "L1_essential" in result
     assert "L2_on_demand" in result
@@ -653,5 +694,5 @@ def test_memory_stack_status_with_palace(tmp_path):
         )
         result = stack.status()
 
-    assert result["total_drawers"] == 42
+    assert result["total_chunks"] == 42
     assert result["L0_identity"]["exists"] is True

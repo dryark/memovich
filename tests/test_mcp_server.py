@@ -7,7 +7,6 @@ via monkeypatch to avoid touching real data.
 """
 
 import json
-import sys
 
 import pytest
 
@@ -20,18 +19,11 @@ def _patch_mcp_server(monkeypatch, config, kg):
     monkeypatch.setattr(mcp_server, "_kg", kg)
 
 
-def _get_collection(palace_path, create=False):
-    """Helper to get collection from test palace.
+def _ensure_collection(palace_path, config, create=False):
+    """Open the test palace collection via the configured vector backend."""
+    from mempalace.palace import get_collection
 
-    Returns (client, collection) so callers can clean up the client
-    when they are done.
-    """
-    import chromadb
-
-    client = chromadb.PersistentClient(path=palace_path)
-    if create:
-        return client, client.get_or_create_collection("mempalace_drawers")
-    return client, client.get_collection("mempalace_drawers")
+    return get_collection(palace_path, create=create, config=config)
 
 
 # ── Protocol Layer ──────────────────────────────────────────────────────
@@ -110,7 +102,7 @@ class TestHandleRequest:
         names = {t["name"] for t in tools}
         assert "mempalace_status" in names
         assert "mempalace_search" in names
-        assert "mempalace_add_drawer" in names
+        assert "mempalace_add_chunk" in names
         assert "mempalace_kg_add" in names
 
     def test_null_arguments_does_not_hang(self, monkeypatch, config, palace_path, seeded_kg):
@@ -118,8 +110,7 @@ class TestHandleRequest:
         _patch_mcp_server(monkeypatch, config, seeded_kg)
         from mempalace.mcp_server import handle_request
 
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
         resp = handle_request(
             {
                 "method": "tools/call",
@@ -189,8 +180,7 @@ class TestHandleRequest:
         from mempalace.mcp_server import handle_request
 
         # Create a collection so status works
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
 
         resp = handle_request(
             {
@@ -201,7 +191,7 @@ class TestHandleRequest:
         )
         assert "result" in resp
         content = json.loads(resp["result"]["content"][0]["text"])
-        assert "total_drawers" in content
+        assert "total_chunks" in content
 
 
 # ── Read Tools ──────────────────────────────────────────────────────────
@@ -210,47 +200,46 @@ class TestHandleRequest:
 class TestReadTools:
     def test_status_empty_palace(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
         from mempalace.mcp_server import tool_status
 
         result = tool_status()
-        assert result["total_drawers"] == 0
-        assert result["wings"] == {}
+        assert result["total_chunks"] == 0
+        assert result["namespaces"] == {}
 
     def test_status_with_data(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_status
 
         result = tool_status()
-        assert result["total_drawers"] == 4
-        assert "project" in result["wings"]
-        assert "notes" in result["wings"]
+        assert result["total_chunks"] == 4
+        assert "project" in result["namespaces"]
+        assert "notes" in result["namespaces"]
 
-    def test_list_wings(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_list_namespaces(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_wings
+        from mempalace.mcp_server import tool_list_namespaces
 
-        result = tool_list_wings()
-        assert result["wings"]["project"] == 3
-        assert result["wings"]["notes"] == 1
+        result = tool_list_namespaces()
+        assert result["namespaces"]["project"] == 3
+        assert result["namespaces"]["notes"] == 1
 
-    def test_list_rooms_all(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_list_segments_all(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_rooms
+        from mempalace.mcp_server import tool_list_segments
 
-        result = tool_list_rooms()
-        assert "backend" in result["rooms"]
-        assert "frontend" in result["rooms"]
-        assert "planning" in result["rooms"]
+        result = tool_list_segments()
+        assert "backend" in result["segments"]
+        assert "frontend" in result["segments"]
+        assert "planning" in result["segments"]
 
-    def test_list_rooms_filtered(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_list_segments_filtered(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_rooms
+        from mempalace.mcp_server import tool_list_segments
 
-        result = tool_list_rooms(wing="project")
-        assert "backend" in result["rooms"]
-        assert "planning" not in result["rooms"]
+        result = tool_list_segments(namespace="project")
+        assert "backend" in result["segments"]
+        assert "planning" not in result["segments"]
 
     def test_get_taxonomy(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
@@ -263,6 +252,9 @@ class TestReadTools:
 
     def test_no_palace_returns_error(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_get_collection", lambda create=False: None)
         from mempalace.mcp_server import tool_status
 
         result = tool_status()
@@ -284,19 +276,23 @@ class TestSearchTool:
         top = result["results"][0]
         assert "JWT" in top["text"] or "authentication" in top["text"].lower()
 
-    def test_search_with_wing_filter(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_search_with_namespace_filter(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_search
 
-        result = tool_search(query="planning", wing="notes")
-        assert all(r["wing"] == "notes" for r in result["results"])
+        result = tool_search(query="planning", namespace="notes")
+        assert all(r["namespace"] == "notes" for r in result["results"])
 
-    def test_search_with_room_filter(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_search_with_segment_filter(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_search
 
-        result = tool_search(query="database", room="backend")
-        assert all(r["room"] == "backend" for r in result["results"])
+        result = tool_search(query="database", segment="backend")
+        assert all(r["segment"] == "backend" for r in result["results"])
 
     def test_search_min_similarity_backwards_compat(
         self, monkeypatch, config, palace_path, seeded_collection, kg
@@ -314,40 +310,40 @@ class TestSearchTool:
         result_loose = tool_search(query="JWT", max_distance=0.01, min_similarity=999.0)
         assert len(result_strict["results"]) <= len(result_loose["results"])
 
-    def test_list_rooms_rejects_invalid_wing(self, monkeypatch, config, kg):
+    def test_list_segments_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
-        result = mcp_server.tool_list_rooms(wing="../etc/passwd")
+        result = mcp_server.tool_list_segments(namespace="../etc/passwd")
         assert "error" in result
 
-    def test_search_rejects_invalid_room(self, monkeypatch, config, kg):
+    def test_search_rejects_invalid_segment(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
         monkeypatch.setattr(mcp_server, "search_memories", lambda *args, **kwargs: pytest.fail())
 
-        result = mcp_server.tool_search(query="JWT", room="../backend")
+        result = mcp_server.tool_search(query="JWT", segment="../backend")
         assert "error" in result
 
-    def test_list_drawers_rejects_invalid_wing(self, monkeypatch, config, kg):
+    def test_list_chunks_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
-        result = mcp_server.tool_list_drawers(wing="../notes")
+        result = mcp_server.tool_list_chunks(namespace="../notes")
         assert "error" in result
 
-    def test_find_tunnels_rejects_invalid_wing(self, monkeypatch, config, kg):
+    def test_find_tunnels_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
-        result = mcp_server.tool_find_tunnels(wing_a="../project")
+        result = mcp_server.tool_find_tunnels(namespace_a="../project")
         assert "error" in result
 
     def test_wal_redacts_sensitive_fields(self, monkeypatch, config, kg, tmp_path):
@@ -372,42 +368,39 @@ class TestSearchTool:
 
 
 class TestWriteTools:
-    def test_add_drawer(self, monkeypatch, config, palace_path, kg):
+    def test_add_chunk(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
-        from mempalace.mcp_server import tool_add_drawer
+        _ensure_collection(palace_path, config, create=True)
+        from mempalace.mcp_server import tool_add_chunk
 
-        result = tool_add_drawer(
-            wing="test_wing",
-            room="test_room",
+        result = tool_add_chunk(
+            namespace="test_namespace",
+            segment="test_segment",
             content="This is a test memory about Python decorators and metaclasses.",
         )
         assert result["success"] is True
-        assert result["wing"] == "test_wing"
-        assert result["room"] == "test_room"
-        assert result["drawer_id"].startswith("drawer_test_wing_test_room_")
+        assert result["namespace"] == "test_namespace"
+        assert result["segment"] == "test_segment"
+        assert result["chunk_id"].startswith("chunk_test_namespace_test_segment_")
 
-    def test_add_drawer_duplicate_detection(self, monkeypatch, config, palace_path, kg):
+    def test_add_chunk_duplicate_detection(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
-        from mempalace.mcp_server import tool_add_drawer
+        _ensure_collection(palace_path, config, create=True)
+        from mempalace.mcp_server import tool_add_chunk
 
         content = "This is a unique test memory about Rust ownership and borrowing."
-        result1 = tool_add_drawer(wing="w", room="r", content=content)
+        result1 = tool_add_chunk(namespace="w", segment="r", content=content)
         assert result1["success"] is True
 
-        result2 = tool_add_drawer(wing="w", room="r", content=content)
+        result2 = tool_add_chunk(namespace="w", segment="r", content=content)
         assert result2["success"] is True
         assert result2["reason"] == "already_exists"
 
-    def test_add_drawer_shared_header_no_collision(self, monkeypatch, config, palace_path, kg):
+    def test_add_chunk_shared_header_no_collision(self, monkeypatch, config, palace_path, kg):
         """Documents sharing a >100-char header must get distinct IDs (full-content hash)."""
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
-        from mempalace.mcp_server import tool_add_drawer
+        _ensure_collection(palace_path, config, create=True)
+        from mempalace.mcp_server import tool_add_chunk
 
         header = "# ACME Corp Knowledge Base\n**Project:** Alpha | **Team:** Backend | **Status:** Active\n\n"
         doc1 = (
@@ -416,28 +409,28 @@ class TestWriteTools:
         )
         doc2 = header + "Decision: Use Redis for session caching. Rationale: sub-ms latency needed."
 
-        result1 = tool_add_drawer(wing="work", room="decisions", content=doc1)
-        result2 = tool_add_drawer(wing="work", room="decisions", content=doc2)
+        result1 = tool_add_chunk(namespace="work", segment="decisions", content=doc1)
+        result2 = tool_add_chunk(namespace="work", segment="decisions", content=doc2)
 
         assert result1["success"] is True
         assert result2["success"] is True
-        assert (
-            result1["drawer_id"] != result2["drawer_id"]
-        ), "Documents with shared header but different content must have distinct drawer IDs"
+        assert result1["chunk_id"] != result2["chunk_id"], (
+            "Documents with shared header but different content must have distinct chunk IDs"
+        )
 
-    def test_delete_drawer(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_delete_chunk(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_delete_drawer
+        from mempalace.mcp_server import tool_delete_chunk
 
-        result = tool_delete_drawer("drawer_proj_backend_aaa")
+        result = tool_delete_chunk("chunk_proj_backend_aaa")
         assert result["success"] is True
         assert seeded_collection.count() == 3
 
-    def test_delete_drawer_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_delete_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_delete_drawer
+        from mempalace.mcp_server import tool_delete_chunk
 
-        result = tool_delete_drawer("nonexistent_drawer")
+        result = tool_delete_chunk("nonexistent_chunk")
         assert result["success"] is False
 
     def test_check_duplicate(self, monkeypatch, config, palace_path, seeded_collection, kg):
@@ -459,104 +452,104 @@ class TestWriteTools:
         )
         assert result["is_duplicate"] is False
 
-    def test_get_drawer(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_get_chunk(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_drawer
+        from mempalace.mcp_server import tool_get_chunk
 
-        result = tool_get_drawer("drawer_proj_backend_aaa")
-        assert result["drawer_id"] == "drawer_proj_backend_aaa"
-        assert result["wing"] == "project"
-        assert result["room"] == "backend"
+        result = tool_get_chunk("chunk_proj_backend_aaa")
+        assert result["chunk_id"] == "chunk_proj_backend_aaa"
+        assert result["namespace"] == "project"
+        assert result["segment"] == "backend"
         assert "JWT tokens" in result["content"]
 
-    def test_get_drawer_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_get_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_drawer
+        from mempalace.mcp_server import tool_get_chunk
 
-        result = tool_get_drawer("nonexistent_drawer")
+        result = tool_get_chunk("nonexistent_chunk")
         assert "error" in result
 
-    def test_list_drawers(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_list_chunks(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_drawers
+        from mempalace.mcp_server import tool_list_chunks
 
-        result = tool_list_drawers()
+        result = tool_list_chunks()
         assert result["count"] == 4
-        assert len(result["drawers"]) == 4
+        assert len(result["chunks"]) == 4
 
-    def test_list_drawers_with_wing_filter(
+    def test_list_chunks_with_namespace_filter(
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_drawers
+        from mempalace.mcp_server import tool_list_chunks
 
-        result = tool_list_drawers(wing="project")
+        result = tool_list_chunks(namespace="project")
         assert result["count"] == 3
-        assert all(d["wing"] == "project" for d in result["drawers"])
+        assert all(d["namespace"] == "project" for d in result["chunks"])
 
-    def test_list_drawers_with_room_filter(
+    def test_list_chunks_with_segment_filter(
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_drawers
+        from mempalace.mcp_server import tool_list_chunks
 
-        result = tool_list_drawers(wing="project", room="backend")
+        result = tool_list_chunks(namespace="project", segment="backend")
         assert result["count"] == 2
-        assert all(d["room"] == "backend" for d in result["drawers"])
+        assert all(d["segment"] == "backend" for d in result["chunks"])
 
-    def test_list_drawers_pagination(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_list_chunks_pagination(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_drawers
+        from mempalace.mcp_server import tool_list_chunks
 
-        result = tool_list_drawers(limit=2, offset=0)
+        result = tool_list_chunks(limit=2, offset=0)
         assert result["count"] == 2
         assert result["limit"] == 2
         assert result["offset"] == 0
 
-    def test_list_drawers_negative_offset_clamped(
+    def test_list_chunks_negative_offset_clamped(
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_drawers
+        from mempalace.mcp_server import tool_list_chunks
 
-        result = tool_list_drawers(offset=-5)
+        result = tool_list_chunks(offset=-5)
         assert result["offset"] == 0
 
-    def test_update_drawer_content(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_update_chunk_content(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_drawer, tool_get_drawer
+        from mempalace.mcp_server import tool_get_chunk, tool_update_chunk
 
-        result = tool_update_drawer(
-            "drawer_proj_backend_aaa", content="Updated content about auth."
-        )
+        result = tool_update_chunk("chunk_proj_backend_aaa", content="Updated content about auth.")
         assert result["success"] is True
 
-        fetched = tool_get_drawer("drawer_proj_backend_aaa")
+        fetched = tool_get_chunk("chunk_proj_backend_aaa")
         assert fetched["content"] == "Updated content about auth."
 
-    def test_update_drawer_wing_and_room(
+    def test_update_chunk_namespace_and_segment(
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_drawer
+        from mempalace.mcp_server import tool_update_chunk
 
-        result = tool_update_drawer("drawer_proj_backend_aaa", wing="new_wing", room="new_room")
+        result = tool_update_chunk(
+            "chunk_proj_backend_aaa", namespace="new_namespace", segment="new_segment"
+        )
         assert result["success"] is True
-        assert result["wing"] == "new_wing"
-        assert result["room"] == "new_room"
+        assert result["namespace"] == "new_namespace"
+        assert result["segment"] == "new_segment"
 
-    def test_update_drawer_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_update_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_drawer
+        from mempalace.mcp_server import tool_update_chunk
 
-        result = tool_update_drawer("nonexistent_drawer", content="hello")
+        result = tool_update_chunk("nonexistent_chunk", content="hello")
         assert result["success"] is False
 
-    def test_update_drawer_noop(self, monkeypatch, config, palace_path, seeded_collection, kg):
+    def test_update_chunk_noop(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_drawer
+        from mempalace.mcp_server import tool_update_chunk
 
-        result = tool_update_drawer("drawer_proj_backend_aaa")
+        result = tool_update_chunk("chunk_proj_backend_aaa")
         assert result["success"] is True
         assert result.get("noop") is True
 
@@ -617,8 +610,7 @@ class TestKGTools:
 class TestDiaryTools:
     def test_diary_write_and_read(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
         from mempalace.mcp_server import tool_diary_write, tool_diary_read
 
         w = tool_diary_write(
@@ -636,110 +628,57 @@ class TestDiaryTools:
 
     def test_diary_read_empty(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
         from mempalace.mcp_server import tool_diary_read
 
         r = tool_diary_read(agent_name="Nobody")
         assert r["entries"] == []
 
 
-# ── Cache Invalidation (inode/mtime) ──────────────────────────────────
+# ── Cache invalidation (storage signature) ────────────────────────────
 
 
 class TestCacheInvalidation:
-    """Tests for _get_collection inode/mtime cache invalidation logic."""
+    """Tests for _get_collection refresh when storage signature changes."""
 
-    def test_mtime_change_invalidates_cache(self, monkeypatch, config, palace_path, kg):
-        """When mtime changes, the cached collection should be replaced."""
+    def test_storage_signature_change_refreshes_cache(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
-        # Create a real collection so _get_collection succeeds
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _n = [0]
 
-        # Prime the cache
-        col1 = mcp_server._get_collection()
-        assert col1 is not None
+        def fake_sig(c):
+            _n[0] += 1
+            return ("memory", 0, float(_n[0]))
 
-        # Simulate an external write changing the mtime
-        old_mtime = mcp_server._palace_db_mtime
-        monkeypatch.setattr(mcp_server, "_palace_db_mtime", old_mtime - 10.0)
+        monkeypatch.setattr(mcp_server, "storage_signature_for_config", fake_sig)
 
-        # _get_collection should detect the mtime drift and reconnect
-        col2 = mcp_server._get_collection()
-        assert col2 is not None
-
-    def test_inode_change_invalidates_cache(self, monkeypatch, config, palace_path, kg):
-        """When inode changes (file replaced), the cached collection should be replaced."""
-        _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
-
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
-
-        # Prime the cache
-        col1 = mcp_server._get_collection()
-        assert col1 is not None
-
-        # Simulate a rebuild that changes the inode
-        monkeypatch.setattr(mcp_server, "_palace_db_inode", 99999)
-
-        col2 = mcp_server._get_collection()
-        assert col2 is not None
-
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="Windows holds chroma.sqlite3 open while the client is cached, blocking os.remove",
-    )
-    def test_missing_db_invalidates_cache(self, monkeypatch, config, palace_path, kg):
-        """When chroma.sqlite3 disappears, a cached collection should be invalidated."""
-        _patch_mcp_server(monkeypatch, config, kg)
-        import os
-        from mempalace import mcp_server
-
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
-
-        # Prime the cache
-        col1 = mcp_server._get_collection()
-        assert col1 is not None
-        assert mcp_server._collection_cache is not None
-
-        # Delete the DB file to simulate a rebuild in progress
-        db_file = os.path.join(palace_path, "chroma.sqlite3")
-        if os.path.isfile(db_file):
-            os.remove(db_file)
-
-        # Cache should be invalidated; _get_collection returns None
-        # because the backend can't open a missing DB without create=True
+        _ensure_collection(palace_path, config, create=True)
         mcp_server._get_collection()
-        # The key assertion: the old cached collection was dropped
-        assert mcp_server._palace_db_inode == 0
-        assert mcp_server._palace_db_mtime == 0.0
+        assert mcp_server._storage_sig == ("memory", 0, 1.0)
+
+        mcp_server._get_collection()
+        assert mcp_server._storage_sig == ("memory", 0, 2.0)
 
     def test_reconnect_reports_failure_when_no_palace(self, monkeypatch, config, kg):
         """tool_reconnect should report failure when no collection is available."""
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
-        # Make _get_collection always return None
         monkeypatch.setattr(mcp_server, "_get_collection", lambda create=False: None)
 
         result = mcp_server.tool_reconnect()
         assert result["success"] is False
         assert "No palace found" in result["message"]
-        assert result["drawers"] == 0
+        assert result["chunks"] == 0
 
     def test_reconnect_reports_success(self, monkeypatch, config, palace_path, kg):
-        """tool_reconnect should report success with drawer count."""
+        """tool_reconnect should report success with chunk count."""
         _patch_mcp_server(monkeypatch, config, kg)
-        _client, _col = _get_collection(palace_path, create=True)
-        del _client
+        _ensure_collection(palace_path, config, create=True)
         from mempalace import mcp_server
 
         result = mcp_server.tool_reconnect()
         assert result["success"] is True
         assert "Reconnected" in result["message"]
-        assert isinstance(result["drawers"], int)
+        assert isinstance(result["chunks"], int)

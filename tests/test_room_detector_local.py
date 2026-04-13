@@ -233,9 +233,9 @@ def test_save_config_valid_yaml(tmp_path):
     save_config(str(tmp_path), "test_proj", rooms)
     config_file = tmp_path / "mempalace.yaml"
     data = yaml.safe_load(config_file.read_text())
-    assert data["wing"] == "test_proj"
-    assert len(data["rooms"]) == 1
-    assert data["rooms"][0]["name"] == "general"
+    assert data["namespace"] == "test_proj"
+    assert len(data["segments"]) == 1
+    assert data["segments"][0]["name"] == "general"
 
 
 # ── print_proposed_structure ──────────────────────────────────────────

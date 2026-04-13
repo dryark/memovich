@@ -34,58 +34,18 @@ import sys
 import re
 import json
 import argparse
-import math
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
 import chromadb
 
-# Add mempal to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
-# =============================================================================
-# METRICS (reimplemented to avoid LongMemEval dependency)
-# =============================================================================
-
-
-def dcg(relevances, k):
-    """Discounted Cumulative Gain."""
-    score = 0.0
-    for i, rel in enumerate(relevances[:k]):
-        score += rel / math.log2(i + 2)
-    return score
-
-
-def ndcg(rankings, correct_ids, corpus_ids, k):
-    """Normalized DCG."""
-    relevances = [1.0 if corpus_ids[idx] in correct_ids else 0.0 for idx in rankings[:k]]
-    ideal = sorted(relevances, reverse=True)
-    idcg = dcg(ideal, k)
-    if idcg == 0:
-        return 0.0
-    return dcg(relevances, k) / idcg
-
-
-def evaluate_retrieval(rankings, correct_ids, corpus_ids, k):
-    """
-    Evaluate retrieval at rank k.
-    Returns (recall_any, recall_all, ndcg_score).
-    """
-    top_k_ids = set(corpus_ids[idx] for idx in rankings[:k])
-    recall_any = float(any(cid in top_k_ids for cid in correct_ids))
-    recall_all = float(all(cid in top_k_ids for cid in correct_ids))
-    ndcg_score = ndcg(rankings, correct_ids, corpus_ids, k)
-    return recall_any, recall_all, ndcg_score
-
-
-def session_id_from_corpus_id(corpus_id):
-    """Extract session ID from a corpus ID (handles both session and turn granularity)."""
-    # Turn IDs look like "sess_123_turn_4" — session part is "sess_123"
-    if "_turn_" in corpus_id:
-        return corpus_id.rsplit("_turn_", 1)[0]
-    return corpus_id
+# Add repo root and benchmarks dir for imports
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_BENCH_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_BENCH_DIR))
+from metrics import evaluate_retrieval, session_id_from_corpus_id, warn_experimental_mode  # noqa: E402
 
 
 # =============================================================================
@@ -3331,6 +3291,7 @@ if __name__ == "__main__":
         "Requires --split-file.",
     )
     args = parser.parse_args()
+    warn_experimental_mode(args.mode)
 
     # ── Handle --create-split ───────────────────────────────────────────────
     if args.create_split:

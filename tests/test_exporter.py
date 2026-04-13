@@ -15,12 +15,12 @@ def write_file(path: Path, content: str):
 
 
 def _setup_palace(tmpdir):
-    """Create a small palace with drawers across two wings for testing."""
+    """Create a small palace with chunks across two namespaces for testing."""
     project_a = Path(tmpdir) / "project_a"
     project_b = Path(tmpdir) / "project_b"
     palace_path = str(Path(tmpdir) / "palace")
 
-    # Project A: wing=alpha, rooms=backend,frontend
+    # Project A: namespace=alpha, segments=backend,frontend
     os.makedirs(project_a / "backend")
     os.makedirs(project_a / "frontend")
     write_file(project_a / "backend" / "server.py", "def serve():\n    return 'ok'\n" * 20)
@@ -28,8 +28,8 @@ def _setup_palace(tmpdir):
     with open(project_a / "mempalace.yaml", "w") as f:
         yaml.dump(
             {
-                "wing": "alpha",
-                "rooms": [
+                "namespace": "alpha",
+                "segments": [
                     {"name": "backend", "description": "Backend code"},
                     {"name": "frontend", "description": "Frontend code"},
                 ],
@@ -37,14 +37,14 @@ def _setup_palace(tmpdir):
             f,
         )
 
-    # Project B: wing=beta, rooms=docs
+    # Project B: namespace=beta, segments=docs
     os.makedirs(project_b / "docs")
     write_file(project_b / "docs" / "guide.md", "# Guide\n\nThis explains things.\n" * 20)
     with open(project_b / "mempalace.yaml", "w") as f:
         yaml.dump(
             {
-                "wing": "beta",
-                "rooms": [{"name": "docs", "description": "Documentation"}],
+                "namespace": "beta",
+                "segments": [{"name": "docs", "description": "Documentation"}],
             },
             f,
         )
@@ -63,10 +63,9 @@ def test_export_creates_structure():
 
         stats = export_palace(palace_path, output_dir)
 
-        # Should have two wings
-        assert stats["wings"] == 2
-        assert stats["rooms"] >= 2
-        assert stats["drawers"] >= 3
+        assert stats["namespaces"] == 2
+        assert stats["segments"] >= 2
+        assert stats["chunks"] >= 3
 
         # Directory structure
         assert os.path.isfile(os.path.join(output_dir, "index.md"))
@@ -94,7 +93,7 @@ def test_export_markdown_content():
         content = backend_md.read_text(encoding="utf-8")
 
         assert content.startswith("# alpha / backend\n")
-        assert "## drawer_" in content
+        assert "## chunk_" in content
         assert "| Field | Value |" in content
         assert "| Source |" in content
         assert "| Filed |" in content
@@ -115,8 +114,8 @@ def test_export_index_content():
         index_md = Path(output_dir) / "index.md"
         content = index_md.read_text(encoding="utf-8")
 
-        assert "# Palace Export" in content
-        assert "| Wing | Rooms | Drawers |" in content
+        assert "# Memory export" in content
+        assert "| Namespace | Segments | Chunks |" in content
         assert "[alpha](alpha/)" in content
         assert "[beta](beta/)" in content
     finally:
@@ -131,6 +130,6 @@ def test_export_empty_palace():
 
         stats = export_palace(palace_path, output_dir)
 
-        assert stats == {"wings": 0, "rooms": 0, "drawers": 0}
+        assert stats == {"namespaces": 0, "segments": 0, "chunks": 0}
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

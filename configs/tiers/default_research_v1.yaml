@@ -1,0 +1,20 @@
+# Tiered context stack aligned with multi-stage RAG: pin → hot window → scoped fetch → full vector search.
+preset: default_research_v1
+tiers:
+  - id: t0_identity
+    role: pin
+    max_tokens: 120
+    source: identity_file
+  - id: t1_essential
+    role: hot_window
+    max_chunks: 15
+    max_chars: 3200
+    max_scan: 2000
+    group_by: segment
+  - id: t2_scoped
+    role: filtered_get
+    default_limit: 10
+    group_by: segment
+  - id: t3_search
+    role: vector_search
+    default_limit: 5

@@ -42,3 +42,13 @@ class BaseCollection(ABC):
     @abstractmethod
     def count(self) -> int:
         raise NotImplementedError
+
+    def update(
+        self,
+        *,
+        ids: List[str],
+        documents: Optional[List[str]] = None,
+        metadatas: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Update documents and/or metadata for existing ids (Chroma-compatible)."""
+        raise NotImplementedError

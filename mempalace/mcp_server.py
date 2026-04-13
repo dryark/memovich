@@ -31,9 +31,10 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import MempalaceConfig, sanitize_name, sanitize_content
+from .metadata_keys import NAMESPACE, SEGMENT
 from .version import __version__
-import chromadb
 from .query_sanitizer import sanitize_query
+from .palace import get_collection, invalidate_vector_backend_cache, storage_signature_for_config
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
 
@@ -70,10 +71,8 @@ else:
     _kg = KnowledgeGraph()
 
 
-_client_cache = None
 _collection_cache = None
-_palace_db_inode = 0  # inode of chroma.sqlite3 at cache time
-_palace_db_mtime = 0.0  # mtime of chroma.sqlite3 at cache time
+_storage_sig = None  # backend-specific signature for cache invalidation (Chroma DB file)
 
 
 # ==================== WRITE-AHEAD LOG ====================
@@ -126,76 +125,49 @@ def _wal_log(operation: str, params: dict, result: dict = None):
         logger.error(f"WAL write failed: {e}")
 
 
-def _get_client():
-    """Return a ChromaDB PersistentClient, reconnecting if the database changed on disk.
-
-    Detects palace rebuilds (repair/nuke/purge) by checking the inode of
-    chroma.sqlite3.  A full rebuild replaces the file, changing the inode.
-    Also detects external writes (scripts, CLI) via mtime changes — the
-    inode check alone misses in-place modifications that invalidate the
-    in-memory HNSW index.
-
-    Note: FAT/exFAT may return 0 for st_ino — the ``current_inode != 0``
-    guard skips reconnect detection on those filesystems (safe fallback).
-    """
-    global \
-        _client_cache, \
-        _collection_cache, \
-        _palace_db_inode, \
-        _palace_db_mtime, \
-        _metadata_cache, \
-        _metadata_cache_time
-    db_path = os.path.join(_config.palace_path, "chroma.sqlite3")
-    try:
-        st = os.stat(db_path)
-        current_inode = st.st_ino
-        current_mtime = st.st_mtime
-    except OSError:
-        current_inode = 0
-        current_mtime = 0.0
-
-    # If the DB file disappeared (e.g. during rebuild) but we have a cached
-    # collection, invalidate so we don't serve stale data.  Without this,
-    # both stored and current values are 0 on the first call after deletion,
-    # making inode_changed and mtime_changed both False.
-    if not os.path.isfile(db_path) and _collection_cache is not None:
-        _client_cache = None
-        _collection_cache = None
-        _palace_db_inode = 0
-        _palace_db_mtime = 0.0
-        # Fall through to normal reconnect which will handle missing DB
-
-    inode_changed = current_inode != 0 and current_inode != _palace_db_inode
-    mtime_changed = current_mtime != 0.0 and abs(current_mtime - _palace_db_mtime) > 0.01
-
-    if _client_cache is None or inode_changed or mtime_changed:
-        _client_cache = chromadb.PersistentClient(path=_config.palace_path)
-        _collection_cache = None
-        _metadata_cache = None
-        _metadata_cache_time = 0
-        _palace_db_inode = current_inode
-        _palace_db_mtime = current_mtime
-    return _client_cache
-
-
 def _get_collection(create=False):
-    """Return the ChromaDB collection, caching the client between calls."""
-    global _collection_cache, _metadata_cache, _metadata_cache_time
-    try:
-        client = _get_client()
-        if create:
-            _collection_cache = client.get_or_create_collection(
-                _config.collection_name, metadata={"hnsw:space": "cosine"}
+    """Return the vector collection, caching between calls; refresh on Chroma DB changes."""
+    global _collection_cache, _storage_sig, _metadata_cache, _metadata_cache_time
+    current_sig = storage_signature_for_config(_config)
+    if _config.vector_backend == "chroma":
+        db_path = os.path.join(_config.palace_path, "chroma.sqlite3")
+        if not os.path.isfile(db_path) and _collection_cache is not None:
+            _collection_cache = None
+            _storage_sig = None
+            _metadata_cache = None
+            _metadata_cache_time = 0
+
+    need_refresh = _collection_cache is None or (
+        _storage_sig is not None and current_sig != _storage_sig
+    )
+
+    if need_refresh:
+        try:
+            _collection_cache = get_collection(
+                _config.palace_path,
+                collection_name=_config.collection_name,
+                create=create,
+                config=_config,
+            )
+            _storage_sig = current_sig
+            _metadata_cache = None
+            _metadata_cache_time = 0
+        except Exception:
+            _collection_cache = None
+            return None
+    elif create:
+        try:
+            _collection_cache = get_collection(
+                _config.palace_path,
+                collection_name=_config.collection_name,
+                create=True,
+                config=_config,
             )
             _metadata_cache = None
             _metadata_cache_time = 0
-        elif _collection_cache is None:
-            _collection_cache = client.get_collection(_config.collection_name)
-            _metadata_cache = None
-            _metadata_cache_time = 0
-        return _collection_cache
-    except Exception:
-        return None
+        except Exception:
+            return None
+    return _collection_cache
 
 
 def _no_palace():
@@ -263,12 +235,12 @@ def tool_status():
     if not col:
         return _no_palace()
     count = col.count()
-    wings = {}
-    rooms = {}
+    namespaces = {}
+    segments = {}
     result = {
-        "total_drawers": count,
-        "wings": wings,
-        "rooms": rooms,
+        "total_chunks": count,
+        "namespaces": namespaces,
+        "segments": segments,
         "palace_path": _config.palace_path,
         "protocol": PALACE_PROTOCOL,
         "aaak_dialect": AAAK_SPEC,
@@ -276,10 +248,10 @@ def tool_status():
     try:
         all_meta = _get_cached_metadata(col)
         for m in all_meta:
-            w = m.get("wing", "unknown")
-            r = m.get("room", "unknown")
-            wings[w] = wings.get(w, 0) + 1
-            rooms[r] = rooms.get(r, 0) + 1
+            w = m.get(NAMESPACE, "unknown")
+            r = m.get(SEGMENT, "unknown")
+            namespaces[w] = namespaces.get(w, 0) + 1
+            segments[r] = segments.get(r, 0) + 1
     except Exception as e:
         logger.exception("tool_status metadata fetch failed")
         result["error"] = str(e)
@@ -320,42 +292,42 @@ Read AAAK naturally — expand codes mentally, treat *markers* as emotional cont
 When WRITING AAAK: use entity codes, mark emotions, keep structure tight."""
 
 
-def tool_list_wings():
+def tool_list_namespaces():
     col = _get_collection()
     if not col:
         return _no_palace()
-    wings = {}
-    result = {"wings": wings}
+    namespaces = {}
+    result = {"namespaces": namespaces}
     try:
         all_meta = _get_cached_metadata(col)
         for m in all_meta:
-            w = m.get("wing", "unknown")
-            wings[w] = wings.get(w, 0) + 1
+            w = m.get(NAMESPACE, "unknown")
+            namespaces[w] = namespaces.get(w, 0) + 1
     except Exception as e:
-        logger.exception("tool_list_wings metadata fetch failed")
+        logger.exception("tool_list_namespaces metadata fetch failed")
         result["error"] = str(e)
         result["partial"] = True
     return result
 
 
-def tool_list_rooms(wing: str = None):
+def tool_list_segments(namespace: str = None):
     try:
-        wing = _sanitize_optional_name(wing, "wing")
+        namespace = _sanitize_optional_name(namespace, "namespace")
     except ValueError as e:
         return {"error": str(e)}
     col = _get_collection()
     if not col:
         return _no_palace()
-    rooms = {}
-    result = {"wing": wing or "all", "rooms": rooms}
+    segments = {}
+    result = {"namespace": namespace or "all", "segments": segments}
     try:
-        where = {"wing": wing} if wing else None
+        where = {NAMESPACE: namespace} if namespace else None
         all_meta = _fetch_all_metadata(col, where=where)
         for m in all_meta:
-            r = m.get("room", "unknown")
-            rooms[r] = rooms.get(r, 0) + 1
+            r = m.get(SEGMENT, "unknown")
+            segments[r] = segments.get(r, 0) + 1
     except Exception as e:
-        logger.exception("tool_list_rooms metadata fetch failed")
+        logger.exception("tool_list_segments metadata fetch failed")
         result["error"] = str(e)
         result["partial"] = True
     return result
@@ -370,8 +342,8 @@ def tool_get_taxonomy():
     try:
         all_meta = _get_cached_metadata(col)
         for m in all_meta:
-            w = m.get("wing", "unknown")
-            r = m.get("room", "unknown")
+            w = m.get(NAMESPACE, "unknown")
+            r = m.get(SEGMENT, "unknown")
             if w not in taxonomy:
                 taxonomy[w] = {}
             taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
@@ -385,29 +357,26 @@ def tool_get_taxonomy():
 def tool_search(
     query: str,
     limit: int = 5,
-    wing: str = None,
-    room: str = None,
+    namespace: str = None,
+    segment: str = None,
     max_distance: float = 1.5,
     min_similarity: float = None,
     context: str = None,
 ):
     limit = max(1, min(limit, _MAX_RESULTS))
     try:
-        wing = _sanitize_optional_name(wing, "wing")
-        room = _sanitize_optional_name(room, "room")
+        namespace = _sanitize_optional_name(namespace, "namespace")
+        segment = _sanitize_optional_name(segment, "segment")
     except ValueError as e:
         return {"error": str(e)}
-    # Backwards compat: accept old name
-    # Backwards compat: convert old similarity scale (higher=stricter) to
-    # distance scale (lower=stricter). Similarity 0.8 → distance 0.2.
+    # Convert old similarity scale (higher=stricter) to distance scale (lower=stricter).
     dist = (1.0 - min_similarity) if min_similarity is not None else max_distance
-    # Mitigate system prompt contamination (Issue #333)
     sanitized = sanitize_query(query)
     result = search_memories(
         sanitized["clean_query"],
         palace_path=_config.palace_path,
-        wing=wing,
-        room=room,
+        namespace=namespace,
+        segment=segment,
         n_results=limit,
         max_distance=dist,
     )
@@ -446,8 +415,8 @@ def tool_check_duplicate(content: str, threshold: float = 0.9):
                     duplicates.append(
                         {
                             "id": drawer_id,
-                            "wing": meta.get("wing", "?"),
-                            "room": meta.get("room", "?"),
+                            "namespace": meta.get(NAMESPACE, "?"),
+                            "segment": meta.get(SEGMENT, "?"),
                             "similarity": similarity,
                             "content": doc[:200] + "..." if len(doc) > 200 else doc,
                         }
@@ -475,17 +444,17 @@ def tool_traverse_graph(start_room: str, max_hops: int = 2):
     return traverse(start_room, col=col, max_hops=max_hops)
 
 
-def tool_find_tunnels(wing_a: str = None, wing_b: str = None):
-    """Find rooms that bridge two wings — the hallways connecting domains."""
+def tool_find_tunnels(namespace_a: str = None, namespace_b: str = None):
+    """Find segments that bridge two namespaces."""
     try:
-        wing_a = _sanitize_optional_name(wing_a, "wing_a")
-        wing_b = _sanitize_optional_name(wing_b, "wing_b")
+        namespace_a = _sanitize_optional_name(namespace_a, "namespace_a")
+        namespace_b = _sanitize_optional_name(namespace_b, "namespace_b")
     except ValueError as e:
         return {"error": str(e)}
     col = _get_collection()
     if not col:
         return _no_palace()
-    return find_tunnels(wing_a, wing_b, col=col)
+    return find_tunnels(namespace_a, namespace_b, col=col)
 
 
 def tool_graph_stats():
@@ -499,14 +468,14 @@ def tool_graph_stats():
 # ==================== WRITE TOOLS ====================
 
 
-def tool_add_drawer(
-    wing: str, room: str, content: str, source_file: str = None, added_by: str = "mcp"
+def tool_add_chunk(
+    namespace: str, segment: str, content: str, source_file: str = None, added_by: str = "mcp"
 ):
-    """File verbatim content into a wing/room. Checks for duplicates first."""
+    """File verbatim content into namespace/segment. Checks for duplicates first."""
     global _metadata_cache
     try:
-        wing = sanitize_name(wing, "wing")
-        room = sanitize_name(room, "room")
+        namespace = sanitize_name(namespace, "namespace")
+        segment = sanitize_name(segment, "segment")
         content = sanitize_content(content)
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -515,38 +484,38 @@ def tool_add_drawer(
     if not col:
         return _no_palace()
 
-    drawer_id = (
-        f"drawer_{wing}_{room}_{hashlib.sha256((wing + room + content).encode()).hexdigest()[:24]}"
+    chunk_id = (
+        f"chunk_{namespace}_{segment}_"
+        f"{hashlib.sha256((namespace + segment + content).encode()).hexdigest()[:24]}"
     )
 
     _wal_log(
-        "add_drawer",
+        "add_chunk",
         {
-            "drawer_id": drawer_id,
-            "wing": wing,
-            "room": room,
+            "chunk_id": chunk_id,
+            "namespace": namespace,
+            "segment": segment,
             "added_by": added_by,
             "content_length": len(content),
             "content_preview": content[:200],
         },
     )
 
-    # Idempotency: if the deterministic ID already exists, return success as a no-op.
     try:
-        existing = col.get(ids=[drawer_id])
+        existing = col.get(ids=[chunk_id])
         if existing and existing["ids"]:
-            return {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
+            return {"success": True, "reason": "already_exists", "chunk_id": chunk_id}
     except Exception:
         pass
 
     try:
         col.upsert(
-            ids=[drawer_id],
+            ids=[chunk_id],
             documents=[content],
             metadatas=[
                 {
-                    "wing": wing,
-                    "room": room,
+                    NAMESPACE: namespace,
+                    SEGMENT: segment,
                     "source_file": source_file or "",
                     "chunk_index": 0,
                     "added_by": added_by,
@@ -555,72 +524,76 @@ def tool_add_drawer(
             ],
         )
         _metadata_cache = None
-        logger.info(f"Filed drawer: {drawer_id} → {wing}/{room}")
-        return {"success": True, "drawer_id": drawer_id, "wing": wing, "room": room}
+        logger.info("Filed chunk: %s → %s/%s", chunk_id, namespace, segment)
+        return {
+            "success": True,
+            "chunk_id": chunk_id,
+            "namespace": namespace,
+            "segment": segment,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
-def tool_delete_drawer(drawer_id: str):
-    """Delete a single drawer by ID."""
+def tool_delete_chunk(chunk_id: str):
+    """Delete a single chunk by ID."""
     global _metadata_cache
     col = _get_collection()
     if not col:
         return _no_palace()
-    existing = col.get(ids=[drawer_id])
+    existing = col.get(ids=[chunk_id])
     if not existing["ids"]:
-        return {"success": False, "error": f"Drawer not found: {drawer_id}"}
+        return {"success": False, "error": f"Chunk not found: {chunk_id}"}
 
-    # Log the deletion with the content being removed for audit trail
     deleted_content = existing.get("documents", [""])[0] if existing.get("documents") else ""
     deleted_meta = existing.get("metadatas", [{}])[0] if existing.get("metadatas") else {}
     _wal_log(
-        "delete_drawer",
+        "delete_chunk",
         {
-            "drawer_id": drawer_id,
+            "chunk_id": chunk_id,
             "deleted_meta": deleted_meta,
             "content_preview": deleted_content[:200],
         },
     )
 
     try:
-        col.delete(ids=[drawer_id])
+        col.delete(ids=[chunk_id])
         _metadata_cache = None
-        logger.info(f"Deleted drawer: {drawer_id}")
-        return {"success": True, "drawer_id": drawer_id}
+        logger.info("Deleted chunk: %s", chunk_id)
+        return {"success": True, "chunk_id": chunk_id}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
-def tool_get_drawer(drawer_id: str):
-    """Fetch a single drawer by ID. Returns full content and metadata."""
+def tool_get_chunk(chunk_id: str):
+    """Fetch a single chunk by ID — returns full content and metadata."""
     col = _get_collection()
     if not col:
         return _no_palace()
     try:
-        result = col.get(ids=[drawer_id], include=["documents", "metadatas"])
+        result = col.get(ids=[chunk_id], include=["documents", "metadatas"])
         if not result["ids"]:
-            return {"error": f"Drawer not found: {drawer_id}"}
+            return {"error": f"Chunk not found: {chunk_id}"}
         meta = result["metadatas"][0]
         doc = result["documents"][0]
         return {
-            "drawer_id": drawer_id,
+            "chunk_id": chunk_id,
             "content": doc,
-            "wing": meta.get("wing", ""),
-            "room": meta.get("room", ""),
+            "namespace": meta.get(NAMESPACE, ""),
+            "segment": meta.get(SEGMENT, ""),
             "metadata": meta,
         }
     except Exception as e:
         return {"error": str(e)}
 
 
-def tool_list_drawers(wing: str = None, room: str = None, limit: int = 20, offset: int = 0):
-    """List drawers with pagination. Optional wing/room filter."""
+def tool_list_chunks(namespace: str = None, segment: str = None, limit: int = 20, offset: int = 0):
+    """List chunks with pagination. Optional namespace/segment filter."""
     limit = max(1, min(limit, _MAX_RESULTS))
     offset = max(0, offset)
     try:
-        wing = _sanitize_optional_name(wing, "wing")
-        room = _sanitize_optional_name(room, "room")
+        namespace = _sanitize_optional_name(namespace, "namespace")
+        segment = _sanitize_optional_name(segment, "segment")
     except ValueError as e:
         return {"error": str(e)}
     col = _get_collection()
@@ -629,10 +602,10 @@ def tool_list_drawers(wing: str = None, room: str = None, limit: int = 20, offse
     try:
         where = None
         conditions = []
-        if wing:
-            conditions.append({"wing": wing})
-        if room:
-            conditions.append({"room": room})
+        if namespace:
+            conditions.append({NAMESPACE: namespace})
+        if segment:
+            conditions.append({SEGMENT: segment})
         if len(conditions) == 1:
             where = conditions[0]
         elif len(conditions) > 1:
@@ -643,21 +616,21 @@ def tool_list_drawers(wing: str = None, room: str = None, limit: int = 20, offse
             kwargs["where"] = where
         result = col.get(**kwargs)
 
-        drawers = []
-        for i, did in enumerate(result["ids"]):
+        chunks = []
+        for i, cid in enumerate(result["ids"]):
             meta = result["metadatas"][i]
             doc = result["documents"][i]
-            drawers.append(
+            chunks.append(
                 {
-                    "drawer_id": did,
-                    "wing": meta.get("wing", ""),
-                    "room": meta.get("room", ""),
+                    "chunk_id": cid,
+                    "namespace": meta.get(NAMESPACE, ""),
+                    "segment": meta.get(SEGMENT, ""),
                     "content_preview": doc[:200] + "..." if len(doc) > 200 else doc,
                 }
             )
         return {
-            "drawers": drawers,
-            "count": len(drawers),
+            "chunks": chunks,
+            "count": len(chunks),
             "offset": offset,
             "limit": limit,
         }
@@ -665,20 +638,22 @@ def tool_list_drawers(wing: str = None, room: str = None, limit: int = 20, offse
         return {"error": str(e)}
 
 
-def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, room: str = None):
-    """Update an existing drawer's content and/or metadata."""
+def tool_update_chunk(
+    chunk_id: str, content: str = None, namespace: str = None, segment: str = None
+):
+    """Update an existing chunk's content and/or metadata."""
     global _metadata_cache
 
-    if content is None and wing is None and room is None:
-        return {"success": True, "drawer_id": drawer_id, "noop": True}
+    if content is None and namespace is None and segment is None:
+        return {"success": True, "chunk_id": chunk_id, "noop": True}
 
     col = _get_collection()
     if not col:
         return _no_palace()
     try:
-        existing = col.get(ids=[drawer_id], include=["documents", "metadatas"])
+        existing = col.get(ids=[chunk_id], include=["documents", "metadatas"])
         if not existing["ids"]:
-            return {"success": False, "error": f"Drawer not found: {drawer_id}"}
+            return {"success": False, "error": f"Chunk not found: {chunk_id}"}
 
         old_meta = existing["metadatas"][0]
         old_doc = existing["documents"][0]
@@ -691,31 +666,31 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
                 return {"success": False, "error": str(e)}
 
         new_meta = dict(old_meta)
-        if wing is not None:
+        if namespace is not None:
             try:
-                new_meta["wing"] = sanitize_name(wing, "wing")
+                new_meta[NAMESPACE] = sanitize_name(namespace, "namespace")
             except ValueError as e:
                 return {"success": False, "error": str(e)}
-        if room is not None:
+        if segment is not None:
             try:
-                new_meta["room"] = sanitize_name(room, "room")
+                new_meta[SEGMENT] = sanitize_name(segment, "segment")
             except ValueError as e:
                 return {"success": False, "error": str(e)}
 
         _wal_log(
-            "update_drawer",
+            "update_chunk",
             {
-                "drawer_id": drawer_id,
-                "old_wing": old_meta.get("wing", ""),
-                "old_room": old_meta.get("room", ""),
-                "new_wing": new_meta.get("wing", ""),
-                "new_room": new_meta.get("room", ""),
+                "chunk_id": chunk_id,
+                "old_namespace": old_meta.get(NAMESPACE, ""),
+                "old_segment": old_meta.get(SEGMENT, ""),
+                "new_namespace": new_meta.get(NAMESPACE, ""),
+                "new_segment": new_meta.get(SEGMENT, ""),
                 "content_changed": content is not None,
                 "content_preview": new_doc[:200] if content is not None else None,
             },
         )
 
-        update_kwargs = {"ids": [drawer_id]}
+        update_kwargs = {"ids": [chunk_id]}
         if content is not None:
             update_kwargs["documents"] = [new_doc]
         update_kwargs["metadatas"] = [new_meta]
@@ -723,12 +698,12 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
 
         _metadata_cache = None
 
-        logger.info(f"Updated drawer: {drawer_id}")
+        logger.info("Updated chunk: %s", chunk_id)
         return {
             "success": True,
-            "drawer_id": drawer_id,
-            "wing": new_meta.get("wing", ""),
-            "room": new_meta.get("room", ""),
+            "chunk_id": chunk_id,
+            "namespace": new_meta.get(NAMESPACE, ""),
+            "segment": new_meta.get(SEGMENT, ""),
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -829,14 +804,14 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    wing = f"wing_{agent_name.lower().replace(' ', '_')}"
-    room = "diary"
+    ns = f"wing_{agent_name.lower().replace(' ', '_')}"
+    seg = "diary"
     col = _get_collection(create=True)
     if not col:
         return _no_palace()
 
     now = datetime.now()
-    entry_id = f"diary_{wing}_{now.strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(entry[:50].encode()).hexdigest()[:12]}"
+    entry_id = f"diary_{ns}_{now.strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(entry[:50].encode()).hexdigest()[:12]}"
 
     _wal_log(
         "diary_write",
@@ -858,8 +833,8 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
             documents=[entry],
             metadatas=[
                 {
-                    "wing": wing,
-                    "room": room,
+                    NAMESPACE: ns,
+                    SEGMENT: seg,
                     "hall": "hall_diary",
                     "topic": topic,
                     "type": "diary_entry",
@@ -869,7 +844,7 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
                 }
             ],
         )
-        logger.info(f"Diary entry: {entry_id} → {wing}/diary/{topic}")
+        logger.info("Diary entry: %s → %s/diary/%s", entry_id, ns, topic)
         return {
             "success": True,
             "entry_id": entry_id,
@@ -891,14 +866,14 @@ def tool_diary_read(agent_name: str, last_n: int = 10):
     except ValueError as e:
         return {"error": str(e)}
     last_n = max(1, min(last_n, 100))
-    wing = f"wing_{agent_name.lower().replace(' ', '_')}"
+    ns = f"wing_{agent_name.lower().replace(' ', '_')}"
     col = _get_collection()
     if not col:
         return _no_palace()
 
     try:
         results = col.get(
-            where={"$and": [{"wing": wing}, {"room": "diary"}]},
+            where={"$and": [{NAMESPACE: ns}, {SEGMENT: "diary"}]},
             include=["documents", "metadatas"],
             limit=10000,
         )
@@ -1011,24 +986,26 @@ def tool_memories_filed_away():
 
 
 def tool_reconnect():
-    """Force the MCP server to drop the cached ChromaDB collection and reconnect.
+    """Force the MCP server to drop the cached vector collection and reconnect.
 
-    Use after external scripts or CLI commands modify the palace database
-    directly, which can leave the in-memory HNSW index stale.
+    Use after external scripts or CLI commands modify storage, which can leave
+    the in-memory index or connection stale.
     """
-    global _collection_cache, _palace_db_inode, _palace_db_mtime
+    global _collection_cache, _storage_sig, _metadata_cache, _metadata_cache_time
+    invalidate_vector_backend_cache()
     _collection_cache = None
-    _palace_db_inode = 0
-    _palace_db_mtime = 0.0
+    _storage_sig = None
+    _metadata_cache = None
+    _metadata_cache_time = 0
     try:
         col = _get_collection()
         if col is None:
             return {
                 "success": False,
                 "message": "No palace found after reconnect",
-                "drawers": 0,
+                "chunks": 0,
             }
-        return {"success": True, "message": "Reconnected to palace", "drawers": col.count()}
+        return {"success": True, "message": "Reconnected to memory store", "chunks": col.count()}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1037,27 +1014,30 @@ def tool_reconnect():
 
 TOOLS = {
     "mempalace_status": {
-        "description": "Palace overview — total drawers, wing and room counts",
+        "description": "Memory store overview — total chunks, namespace and segment counts",
         "input_schema": {"type": "object", "properties": {}},
         "handler": tool_status,
     },
-    "mempalace_list_wings": {
-        "description": "List all wings with drawer counts",
+    "mempalace_list_namespaces": {
+        "description": "List all namespaces with chunk counts",
         "input_schema": {"type": "object", "properties": {}},
-        "handler": tool_list_wings,
+        "handler": tool_list_namespaces,
     },
-    "mempalace_list_rooms": {
-        "description": "List rooms within a wing (or all rooms if no wing given)",
+    "mempalace_list_segments": {
+        "description": "List segments within a namespace (or all segments if no namespace given)",
         "input_schema": {
             "type": "object",
             "properties": {
-                "wing": {"type": "string", "description": "Wing to list rooms for (optional)"},
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace to list segments for (optional)",
+                },
             },
         },
-        "handler": tool_list_rooms,
+        "handler": tool_list_segments,
     },
     "mempalace_get_taxonomy": {
-        "description": "Full taxonomy: wing → room → drawer count",
+        "description": "Full taxonomy: namespace → segment → chunk count",
         "input_schema": {"type": "object", "properties": {}},
         "handler": tool_get_taxonomy,
     },
@@ -1166,12 +1146,12 @@ TOOLS = {
         "handler": tool_traverse_graph,
     },
     "mempalace_find_tunnels": {
-        "description": "Find rooms that bridge two wings — the hallways connecting different domains. E.g. what topics connect wing_code to wing_team?",
+        "description": "Find segments that bridge two namespaces (topics appearing under multiple domains).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "wing_a": {"type": "string", "description": "First wing (optional)"},
-                "wing_b": {"type": "string", "description": "Second wing (optional)"},
+                "namespace_a": {"type": "string", "description": "First namespace (optional)"},
+                "namespace_b": {"type": "string", "description": "Second namespace (optional)"},
             },
         },
         "handler": tool_find_tunnels,
@@ -1182,7 +1162,7 @@ TOOLS = {
         "handler": tool_graph_stats,
     },
     "mempalace_search": {
-        "description": "Semantic search. Returns verbatim drawer content with similarity scores. IMPORTANT: 'query' must contain ONLY search keywords. Use 'context' for background. Results with cosine distance > max_distance are filtered out.",
+        "description": "Semantic search. Returns verbatim chunk text with similarity scores. IMPORTANT: 'query' must contain ONLY search keywords. Use 'context' for background. Results with cosine distance > max_distance are filtered out.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1197,8 +1177,8 @@ TOOLS = {
                     "minimum": 1,
                     "maximum": 100,
                 },
-                "wing": {"type": "string", "description": "Filter by wing (optional)"},
-                "room": {"type": "string", "description": "Filter by room (optional)"},
+                "namespace": {"type": "string", "description": "Filter by namespace (optional)"},
+                "segment": {"type": "string", "description": "Filter by segment (optional)"},
                 "max_distance": {
                     "type": "number",
                     "description": "Max cosine distance threshold (0=identical, 2=opposite). Results further than this are dropped. Lower = stricter. Default 1.5. Set to 0 to disable.",
@@ -1227,15 +1207,15 @@ TOOLS = {
         },
         "handler": tool_check_duplicate,
     },
-    "mempalace_add_drawer": {
-        "description": "File verbatim content into the palace. Checks for duplicates first.",
+    "mempalace_add_chunk": {
+        "description": "File verbatim content into the memory store. Checks for duplicates first.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "wing": {"type": "string", "description": "Wing (project name)"},
-                "room": {
+                "namespace": {"type": "string", "description": "Namespace (e.g. project name)"},
+                "segment": {
                     "type": "string",
-                    "description": "Room (aspect: backend, decisions, meetings...)",
+                    "description": "Segment (aspect: backend, decisions, meetings...)",
                 },
                 "content": {
                     "type": "string",
@@ -1244,39 +1224,39 @@ TOOLS = {
                 "source_file": {"type": "string", "description": "Where this came from (optional)"},
                 "added_by": {"type": "string", "description": "Who is filing this (default: mcp)"},
             },
-            "required": ["wing", "room", "content"],
+            "required": ["namespace", "segment", "content"],
         },
-        "handler": tool_add_drawer,
+        "handler": tool_add_chunk,
     },
-    "mempalace_delete_drawer": {
-        "description": "Delete a drawer by ID. Irreversible.",
+    "mempalace_delete_chunk": {
+        "description": "Delete a chunk by ID. Irreversible.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "drawer_id": {"type": "string", "description": "ID of the drawer to delete"},
+                "chunk_id": {"type": "string", "description": "ID of the chunk to delete"},
             },
-            "required": ["drawer_id"],
+            "required": ["chunk_id"],
         },
-        "handler": tool_delete_drawer,
+        "handler": tool_delete_chunk,
     },
-    "mempalace_get_drawer": {
-        "description": "Fetch a single drawer by ID — returns full content and metadata.",
+    "mempalace_get_chunk": {
+        "description": "Fetch a single chunk by ID — returns full content and metadata.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "drawer_id": {"type": "string", "description": "ID of the drawer to fetch"},
+                "chunk_id": {"type": "string", "description": "ID of the chunk to fetch"},
             },
-            "required": ["drawer_id"],
+            "required": ["chunk_id"],
         },
-        "handler": tool_get_drawer,
+        "handler": tool_get_chunk,
     },
-    "mempalace_list_drawers": {
-        "description": "List drawers with pagination. Optional wing/room filter. Returns IDs, wings, rooms, and content previews.",
+    "mempalace_list_chunks": {
+        "description": "List chunks with pagination. Optional namespace/segment filter.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "wing": {"type": "string", "description": "Filter by wing (optional)"},
-                "room": {"type": "string", "description": "Filter by room (optional)"},
+                "namespace": {"type": "string", "description": "Filter by namespace (optional)"},
+                "segment": {"type": "string", "description": "Filter by segment (optional)"},
                 "limit": {
                     "type": "integer",
                     "description": "Max results per page (default 20, max 100)",
@@ -1290,30 +1270,30 @@ TOOLS = {
                 },
             },
         },
-        "handler": tool_list_drawers,
+        "handler": tool_list_chunks,
     },
-    "mempalace_update_drawer": {
-        "description": "Update an existing drawer's content and/or metadata (wing, room). Fetches existing drawer first; returns error if not found.",
+    "mempalace_update_chunk": {
+        "description": "Update an existing chunk's content and/or metadata (namespace, segment).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "drawer_id": {"type": "string", "description": "ID of the drawer to update"},
+                "chunk_id": {"type": "string", "description": "ID of the chunk to update"},
                 "content": {
                     "type": "string",
                     "description": "New content (optional — omit to keep existing)",
                 },
-                "wing": {
+                "namespace": {
                     "type": "string",
-                    "description": "New wing (optional — omit to keep existing)",
+                    "description": "New namespace (optional — omit to keep existing)",
                 },
-                "room": {
+                "segment": {
                     "type": "string",
-                    "description": "New room (optional — omit to keep existing)",
+                    "description": "New segment (optional — omit to keep existing)",
                 },
             },
-            "required": ["drawer_id"],
+            "required": ["chunk_id"],
         },
-        "handler": tool_update_drawer,
+        "handler": tool_update_chunk,
     },
     "mempalace_diary_write": {
         "description": "Write to your personal agent diary in AAAK format. Your observations, thoughts, what you worked on, what matters. Each agent has their own diary with full history. Write in AAAK for compression — e.g. 'SESSION:2026-04-04|built.palace.graph+diary.tools|ALC.req:agent.diaries.in.aaak|★★★'. Use entity codes from the AAAK spec.",

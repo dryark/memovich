@@ -15,6 +15,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+from .metadata_keys import NAMESPACE, SEGMENT
 from .normalize import normalize
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 
@@ -32,7 +33,7 @@ CHUNK_SIZE = 800  # chars per drawer — align with miner.py
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB — skip files larger than this
 
 
-def _register_file(collection, source_file: str, wing: str, agent: str):
+def _register_file(collection, source_file: str, namespace: str, agent: str):
     """Write a sentinel so file_already_mined() returns True for 0-chunk files.
 
     Without this, files that normalize to nothing or produce zero chunks are
@@ -45,8 +46,8 @@ def _register_file(collection, source_file: str, wing: str, agent: str):
         ids=[sentinel_id],
         metadatas=[
             {
-                "wing": wing,
-                "room": "_registry",
+                NAMESPACE: namespace,
+                SEGMENT: "_registry",
                 "source_file": source_file,
                 "added_by": agent,
                 "filed_at": datetime.now().isoformat(),
@@ -275,7 +276,7 @@ def scan_convos(convo_dir: str) -> list:
 def mine_convos(
     convo_dir: str,
     palace_path: str,
-    wing: str = None,
+    namespace: str = None,
     agent: str = "mempalace",
     limit: int = 0,
     dry_run: bool = False,
@@ -289,8 +290,8 @@ def mine_convos(
     """
 
     convo_path = Path(convo_dir).expanduser().resolve()
-    if not wing:
-        wing = convo_path.name.lower().replace(" ", "_").replace("-", "_")
+    if not namespace:
+        namespace = convo_path.name.lower().replace(" ", "_").replace("-", "_")
 
     files = scan_convos(convo_dir)
     if limit > 0:
@@ -299,7 +300,7 @@ def mine_convos(
     print(f"\n{'=' * 55}")
     print("  MemPalace Mine — Conversations")
     print(f"{'=' * 55}")
-    print(f"  Wing:    {wing}")
+    print(f"  Namespace: {namespace}")
     print(f"  Source:  {convo_path}")
     print(f"  Files:   {len(files)}")
     print(f"  Palace:  {palace_path}")
@@ -326,12 +327,12 @@ def mine_convos(
             content = normalize(str(filepath))
         except (OSError, ValueError):
             if not dry_run:
-                _register_file(collection, source_file, wing, agent)
+                _register_file(collection, source_file, namespace, agent)
             continue
 
         if not content or len(content.strip()) < MIN_CHUNK_SIZE:
             if not dry_run:
-                _register_file(collection, source_file, wing, agent)
+                _register_file(collection, source_file, namespace, agent)
             continue
 
         # Chunk — either exchange pairs or general extraction
@@ -345,7 +346,7 @@ def mine_convos(
 
         if not chunks:
             if not dry_run:
-                _register_file(collection, source_file, wing, agent)
+                _register_file(collection, source_file, namespace, agent)
             continue
 
         # Detect room from content (general mode uses memory_type instead)
@@ -381,15 +382,18 @@ def mine_convos(
             chunk_room = chunk.get("memory_type", room) if extract_mode == "general" else room
             if extract_mode == "general":
                 room_counts[chunk_room] += 1
-            drawer_id = f"drawer_{wing}_{chunk_room}_{hashlib.sha256((source_file + str(chunk['chunk_index'])).encode()).hexdigest()[:24]}"
+            chunk_id = (
+                f"chunk_{namespace}_{chunk_room}_"
+                f"{hashlib.sha256((source_file + str(chunk['chunk_index'])).encode()).hexdigest()[:24]}"
+            )
             try:
                 collection.upsert(
                     documents=[chunk["content"]],
-                    ids=[drawer_id],
+                    ids=[chunk_id],
                     metadatas=[
                         {
-                            "wing": wing,
-                            "room": chunk_room,
+                            NAMESPACE: namespace,
+                            SEGMENT: chunk_room,
                             "source_file": source_file,
                             "chunk_index": chunk["chunk_index"],
                             "added_by": agent,

@@ -22,32 +22,35 @@ class TestSearchMemories:
         assert len(result["results"]) > 0
         assert result["query"] == "JWT authentication"
 
-    def test_wing_filter(self, palace_path, seeded_collection):
-        result = search_memories("planning", palace_path, wing="notes")
-        assert all(r["wing"] == "notes" for r in result["results"])
+    def test_namespace_filter(self, palace_path, seeded_collection):
+        result = search_memories("planning", palace_path, namespace="notes")
+        assert all(r["namespace"] == "notes" for r in result["results"])
 
-    def test_room_filter(self, palace_path, seeded_collection):
-        result = search_memories("database", palace_path, room="backend")
-        assert all(r["room"] == "backend" for r in result["results"])
+    def test_segment_filter(self, palace_path, seeded_collection):
+        result = search_memories("database", palace_path, segment="backend")
+        assert all(r["segment"] == "backend" for r in result["results"])
 
-    def test_wing_and_room_filter(self, palace_path, seeded_collection):
-        result = search_memories("code", palace_path, wing="project", room="frontend")
-        assert all(r["wing"] == "project" and r["room"] == "frontend" for r in result["results"])
+    def test_namespace_and_segment_filter(self, palace_path, seeded_collection):
+        result = search_memories("code", palace_path, namespace="project", segment="frontend")
+        assert all(
+            r["namespace"] == "project" and r["segment"] == "frontend" for r in result["results"]
+        )
 
     def test_n_results_limit(self, palace_path, seeded_collection):
         result = search_memories("code", palace_path, n_results=2)
         assert len(result["results"]) <= 2
 
     def test_no_palace_returns_error(self, tmp_path):
-        result = search_memories("anything", str(tmp_path / "missing"))
+        with patch("mempalace.searcher.get_collection", side_effect=Exception("missing")):
+            result = search_memories("anything", str(tmp_path / "missing"))
         assert "error" in result
 
     def test_result_fields(self, palace_path, seeded_collection):
         result = search_memories("authentication", palace_path)
         hit = result["results"][0]
         assert "text" in hit
-        assert "wing" in hit
-        assert "room" in hit
+        assert "namespace" in hit
+        assert "segment" in hit
         assert "source_file" in hit
         assert "similarity" in hit
         assert isinstance(hit["similarity"], float)
@@ -63,9 +66,9 @@ class TestSearchMemories:
         assert "query failed" in result["error"]
 
     def test_search_memories_filters_in_result(self, palace_path, seeded_collection):
-        result = search_memories("test", palace_path, wing="project", room="backend")
-        assert result["filters"]["wing"] == "project"
-        assert result["filters"]["room"] == "backend"
+        result = search_memories("test", palace_path, namespace="project", segment="backend")
+        assert result["filters"]["namespace"] == "project"
+        assert result["filters"]["segment"] == "backend"
 
 
 # ── search() (CLI print function) ─────────────────────────────────────
@@ -77,25 +80,26 @@ class TestSearchCLI:
         captured = capsys.readouterr()
         assert "JWT" in captured.out or "authentication" in captured.out
 
-    def test_search_with_wing_filter(self, palace_path, seeded_collection, capsys):
-        search("planning", palace_path, wing="notes")
+    def test_search_with_namespace_filter(self, palace_path, seeded_collection, capsys):
+        search("planning", palace_path, namespace="notes")
         captured = capsys.readouterr()
         assert "Results for" in captured.out
 
-    def test_search_with_room_filter(self, palace_path, seeded_collection, capsys):
-        search("database", palace_path, room="backend")
+    def test_search_with_segment_filter(self, palace_path, seeded_collection, capsys):
+        search("database", palace_path, segment="backend")
         captured = capsys.readouterr()
-        assert "Room:" in captured.out
+        assert "Segment:" in captured.out
 
-    def test_search_with_wing_and_room(self, palace_path, seeded_collection, capsys):
-        search("code", palace_path, wing="project", room="frontend")
+    def test_search_with_namespace_and_segment(self, palace_path, seeded_collection, capsys):
+        search("code", palace_path, namespace="project", segment="frontend")
         captured = capsys.readouterr()
-        assert "Wing:" in captured.out
-        assert "Room:" in captured.out
+        assert "Namespace:" in captured.out
+        assert "Segment:" in captured.out
 
     def test_search_no_palace_raises(self, tmp_path):
-        with pytest.raises(SearchError, match="No palace found"):
-            search("anything", str(tmp_path / "missing"))
+        with patch("mempalace.searcher.get_collection", side_effect=Exception("missing")):
+            with pytest.raises(SearchError, match="No memory store found"):
+                search("anything", str(tmp_path / "missing"))
 
     def test_search_no_results(self, palace_path, collection, capsys):
         """Empty collection returns no results message."""

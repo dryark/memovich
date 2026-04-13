@@ -2,22 +2,18 @@
 palace_graph.py — Graph traversal layer for MemPalace
 ======================================================
 
-Builds a navigable graph from the palace structure:
-  - Nodes = rooms (named ideas)
-  - Edges = shared rooms across wings (tunnels)
-  - Edge types = halls (the corridors)
+Builds a navigable graph from chunk metadata:
+  - Nodes = segments (named ideas / slugs)
+  - Edges = segments that appear under multiple namespaces (tunnels)
+  - Edge types = halls (optional corridor tags on metadata)
 
-Enables queries like:
-  "Start at chromadb-setup in wing_code, walk to wing_myproject"
-  "Find all rooms connected to riley-college-apps"
-  "What topics bridge wing_hardware and wing_myproject?"
-
-No external graph DB needed — built from ChromaDB metadata.
+No external graph DB needed — built from vector store metadata.
 """
 
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 
 from .config import MempalaceConfig
+from .metadata_keys import NAMESPACE, SEGMENT
 from .palace import get_collection as _get_palace_collection
 
 
@@ -35,11 +31,11 @@ def _get_collection(config=None):
 
 def build_graph(col=None, config=None):
     """
-    Build the palace graph from ChromaDB metadata.
+    Build the memory graph from collection metadata.
 
     Returns:
-        nodes: dict of {room: {wings: set, halls: set, count: int}}
-        edges: list of {room, wing_a, wing_b, hall} — one per tunnel crossing
+        nodes: dict of {segment: {namespaces, halls, count, dates}}
+        edges: list of tunnel crossings with namespace_a / namespace_b
     """
     if col is None:
         col = _get_collection(config)
@@ -47,50 +43,50 @@ def build_graph(col=None, config=None):
         return {}, []
 
     total = col.count()
-    room_data = defaultdict(lambda: {"wings": set(), "halls": set(), "count": 0, "dates": set()})
+    seg_data = defaultdict(
+        lambda: {"namespaces": set(), "halls": set(), "count": 0, "dates": set()}
+    )
 
     offset = 0
     while offset < total:
         batch = col.get(limit=1000, offset=offset, include=["metadatas"])
         for meta in batch["metadatas"]:
-            room = meta.get("room", "")
-            wing = meta.get("wing", "")
+            segment = meta.get(SEGMENT, "")
+            namespace = meta.get(NAMESPACE, "")
             hall = meta.get("hall", "")
             date = meta.get("date", "")
-            if room and room != "general" and wing:
-                room_data[room]["wings"].add(wing)
+            if segment and segment != "general" and namespace:
+                seg_data[segment]["namespaces"].add(namespace)
                 if hall:
-                    room_data[room]["halls"].add(hall)
+                    seg_data[segment]["halls"].add(hall)
                 if date:
-                    room_data[room]["dates"].add(date)
-                room_data[room]["count"] += 1
+                    seg_data[segment]["dates"].add(date)
+                seg_data[segment]["count"] += 1
         if not batch["ids"]:
             break
         offset += len(batch["ids"])
 
-    # Build edges from rooms that span multiple wings
     edges = []
-    for room, data in room_data.items():
-        wings = sorted(data["wings"])
-        if len(wings) >= 2:
-            for i, wa in enumerate(wings):
-                for wb in wings[i + 1 :]:
-                    for hall in data["halls"]:
+    for segment, data in seg_data.items():
+        namespaces = sorted(data["namespaces"])
+        if len(namespaces) >= 2:
+            for i, na in enumerate(namespaces):
+                for nb in namespaces[i + 1 :]:
+                    for hall in data["halls"] or {""}:
                         edges.append(
                             {
-                                "room": room,
-                                "wing_a": wa,
-                                "wing_b": wb,
+                                "segment": segment,
+                                "namespace_a": na,
+                                "namespace_b": nb,
                                 "hall": hall,
                                 "count": data["count"],
                             }
                         )
 
-    # Convert sets to lists for JSON serialization
     nodes = {}
-    for room, data in room_data.items():
-        nodes[room] = {
-            "wings": sorted(data["wings"]),
+    for segment, data in seg_data.items():
+        nodes[segment] = {
+            "namespaces": sorted(data["namespaces"]),
             "halls": sorted(data["halls"]),
             "count": data["count"],
             "dates": sorted(data["dates"])[-5:] if data["dates"] else [],
@@ -101,16 +97,19 @@ def build_graph(col=None, config=None):
 
 def traverse(start_room: str, col=None, config=None, max_hops: int = 2):
     """
-    Walk the graph from a starting room. Find connected rooms
-    through shared wings.
+    Walk the graph from a starting segment. Finds other segments linked by
+    shared namespaces (same segment name filed under overlapping domains).
 
-    Returns list of paths: [{room, wing, hall, hop_distance}]
+    MCP parameter remains ``start_room`` for tool-schema stability; value is
+    a segment slug.
+
+    Returns list of dicts with segment, namespaces, halls, hop, etc.
     """
-    nodes, edges = build_graph(col, config)
+    nodes, _edges = build_graph(col, config)
 
     if start_room not in nodes:
         return {
-            "error": f"Room '{start_room}' not found",
+            "error": f"Segment '{start_room}' not found",
             "suggestions": _fuzzy_match(start_room, nodes),
         }
 
@@ -118,71 +117,65 @@ def traverse(start_room: str, col=None, config=None, max_hops: int = 2):
     visited = {start_room}
     results = [
         {
-            "room": start_room,
-            "wings": start["wings"],
+            "segment": start_room,
+            "namespaces": start["namespaces"],
             "halls": start["halls"],
             "count": start["count"],
             "hop": 0,
         }
     ]
 
-    # BFS traversal
     frontier = [(start_room, 0)]
     while frontier:
-        current_room, depth = frontier.pop(0)
+        current_segment, depth = frontier.pop(0)
         if depth >= max_hops:
             continue
 
-        current = nodes.get(current_room, {})
-        current_wings = set(current.get("wings", []))
+        current = nodes.get(current_segment, {})
+        current_ns = set(current.get("namespaces", []))
 
-        # Find all rooms that share a wing with current room
-        for room, data in nodes.items():
-            if room in visited:
+        for segment, data in nodes.items():
+            if segment in visited:
                 continue
-            shared_wings = current_wings & set(data["wings"])
-            if shared_wings:
-                visited.add(room)
+            shared_ns = current_ns & set(data["namespaces"])
+            if shared_ns:
+                visited.add(segment)
                 results.append(
                     {
-                        "room": room,
-                        "wings": data["wings"],
+                        "segment": segment,
+                        "namespaces": data["namespaces"],
                         "halls": data["halls"],
                         "count": data["count"],
                         "hop": depth + 1,
-                        "connected_via": sorted(shared_wings),
+                        "connected_via": sorted(shared_ns),
                     }
                 )
                 if depth + 1 < max_hops:
-                    frontier.append((room, depth + 1))
+                    frontier.append((segment, depth + 1))
 
-    # Sort by relevance (hop distance, then count)
     results.sort(key=lambda x: (x["hop"], -x["count"]))
-    return results[:50]  # cap results
+    return results[:50]
 
 
-def find_tunnels(wing_a: str = None, wing_b: str = None, col=None, config=None):
-    """
-    Find rooms that connect two wings (or all tunnel rooms if no wings specified).
-    These are the "hallways" — same named idea appearing in multiple domains.
-    """
-    nodes, edges = build_graph(col, config)
+def find_tunnels(namespace_a: str = None, namespace_b: str = None, col=None, config=None):
+    """Segments that bridge two namespaces (or all tunnels if filters omitted)."""
+    nodes, _edges = build_graph(col, config)
 
     tunnels = []
-    for room, data in nodes.items():
-        wings = data["wings"]
-        if len(wings) < 2:
+    for segment, data in nodes.items():
+        namespaces = data["namespaces"]
+        if len(namespaces) < 2:
             continue
 
-        if wing_a and wing_a not in wings:
+        if namespace_a and namespace_a not in namespaces:
             continue
-        if wing_b and wing_b not in wings:
+        if namespace_b and namespace_b not in namespaces:
             continue
 
         tunnels.append(
             {
-                "room": room,
-                "wings": wings,
+                "segment": segment,
+                "namespaces": namespaces,
                 "halls": data["halls"],
                 "count": data["count"],
                 "recent": data["dates"][-1] if data["dates"] else "",
@@ -194,37 +187,36 @@ def find_tunnels(wing_a: str = None, wing_b: str = None, col=None, config=None):
 
 
 def graph_stats(col=None, config=None):
-    """Summary statistics about the palace graph."""
+    """Summary statistics about the memory graph."""
     nodes, edges = build_graph(col, config)
 
-    tunnel_rooms = sum(1 for n in nodes.values() if len(n["wings"]) >= 2)
-    wing_counts = Counter()
+    tunnel_segments = sum(1 for n in nodes.values() if len(n["namespaces"]) >= 2)
+    namespace_counts = Counter()
     for data in nodes.values():
-        for w in data["wings"]:
-            wing_counts[w] += 1
+        for ns in data["namespaces"]:
+            namespace_counts[ns] += 1
 
     return {
-        "total_rooms": len(nodes),
-        "tunnel_rooms": tunnel_rooms,
+        "total_segments": len(nodes),
+        "tunnel_segments": tunnel_segments,
         "total_edges": len(edges),
-        "rooms_per_wing": dict(wing_counts.most_common()),
+        "segments_per_namespace": dict(namespace_counts.most_common()),
         "top_tunnels": [
-            {"room": r, "wings": d["wings"], "count": d["count"]}
-            for r, d in sorted(nodes.items(), key=lambda x: -len(x[1]["wings"]))[:10]
-            if len(d["wings"]) >= 2
+            {"segment": s, "namespaces": d["namespaces"], "count": d["count"]}
+            for s, d in sorted(nodes.items(), key=lambda x: -len(x[1]["namespaces"]))[:10]
+            if len(d["namespaces"]) >= 2
         ],
     }
 
 
 def _fuzzy_match(query: str, nodes: dict, n: int = 5):
-    """Find rooms that approximately match a query string."""
+    """Find segments that approximately match a query string."""
     query_lower = query.lower()
     scored = []
-    for room in nodes:
-        # Simple substring matching
-        if query_lower in room:
-            scored.append((room, 1.0))
-        elif any(word in room for word in query_lower.split("-")):
-            scored.append((room, 0.5))
+    for segment in nodes:
+        if query_lower in segment:
+            scored.append((segment, 1.0))
+        elif any(word in segment for word in query_lower.split("-")):
+            scored.append((segment, 0.5))
     scored.sort(key=lambda x: -x[1])
-    return [r for r, _ in scored[:n]]
+    return [s for s, _ in scored[:n]]

@@ -60,6 +60,10 @@ def sanitize_content(value: str, max_length: int = 100_000) -> str:
 
 DEFAULT_PALACE_PATH = os.path.expanduser("~/.mempalace/palace")
 DEFAULT_COLLECTION_NAME = "mempalace_drawers"
+DEFAULT_VECTOR_BACKEND = "postgres"
+DEFAULT_POSTGRES_DSN = "postgresql://localhost:5432/mempalace"
+DEFAULT_POSTGRES_TABLE = "mempalace_chunks"
+DEFAULT_TIER_PRESET = "default_research_v1"
 
 DEFAULT_TOPIC_WINGS = [
     "emotions",
@@ -149,8 +153,31 @@ class MempalaceConfig:
 
     @property
     def collection_name(self):
-        """ChromaDB collection name."""
+        """Logical collection name (Chroma collection or Postgres table basename)."""
         return self._file_config.get("collection_name", DEFAULT_COLLECTION_NAME)
+
+    @property
+    def vector_backend(self) -> str:
+        """``postgres`` | ``chroma`` | ``memory``."""
+        env = os.environ.get("MEMPALACE_VECTOR_BACKEND")
+        if env:
+            return env.strip().lower()
+        return str(self._file_config.get("vector_backend", DEFAULT_VECTOR_BACKEND)).lower()
+
+    @property
+    def postgres_dsn(self) -> str:
+        env = os.environ.get("MEMPALACE_POSTGRES_DSN")
+        if env:
+            return env.strip()
+        return str(self._file_config.get("postgres_dsn", DEFAULT_POSTGRES_DSN))
+
+    @property
+    def postgres_table(self) -> str:
+        return str(self._file_config.get("postgres_table", DEFAULT_POSTGRES_TABLE))
+
+    @property
+    def tier_preset(self) -> str:
+        return str(self._file_config.get("tier_preset", DEFAULT_TIER_PRESET))
 
     @property
     def people_map(self):
@@ -206,6 +233,10 @@ class MempalaceConfig:
             default_config = {
                 "palace_path": DEFAULT_PALACE_PATH,
                 "collection_name": DEFAULT_COLLECTION_NAME,
+                "vector_backend": DEFAULT_VECTOR_BACKEND,
+                "postgres_dsn": DEFAULT_POSTGRES_DSN,
+                "postgres_table": DEFAULT_POSTGRES_TABLE,
+                "tier_preset": DEFAULT_TIER_PRESET,
                 "topic_wings": DEFAULT_TOPIC_WINGS,
                 "hall_keywords": DEFAULT_HALL_KEYWORDS,
             }

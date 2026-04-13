@@ -7,7 +7,7 @@ import chromadb
 import yaml
 
 from mempalace.miner import mine, scan_project, status
-from mempalace.palace import file_already_mined
+from mempalace.palace import file_already_mined, get_collection
 
 
 def write_file(path: Path, content: str):
@@ -32,8 +32,8 @@ def test_project_mining():
         with open(project_root / "mempalace.yaml", "w") as f:
             yaml.dump(
                 {
-                    "wing": "test_project",
-                    "rooms": [
+                    "namespace": "test_project",
+                    "segments": [
                         {"name": "backend", "description": "Backend code"},
                         {"name": "general", "description": "General"},
                     ],
@@ -44,8 +44,7 @@ def test_project_mining():
         palace_path = project_root / "palace"
         mine(str(project_root), str(palace_path))
 
-        client = chromadb.PersistentClient(path=str(palace_path))
-        col = client.get_collection("mempalace_drawers")
+        col = get_collection(str(palace_path), create=False)
         assert col.count() > 0
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -275,8 +274,8 @@ def test_mine_dry_run_with_tiny_file_no_crash():
         with open(project_root / "mempalace.yaml", "w") as f:
             yaml.dump(
                 {
-                    "wing": "test_project",
-                    "rooms": [{"name": "general", "description": "General"}],
+                    "namespace": "test_project",
+                    "segments": [{"name": "general", "description": "General"}],
                 },
                 f,
             )
@@ -294,5 +293,5 @@ def test_status_missing_palace_does_not_create_empty_collection(tmp_path, capsys
     status(str(palace_path))
 
     out = capsys.readouterr().out
-    assert "No palace found" in out
+    assert "0 chunks" in out
     assert not palace_path.exists()

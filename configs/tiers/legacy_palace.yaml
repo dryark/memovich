@@ -1,0 +1,38 @@
+# Example preset mirroring topic "halls" → segment routing (keyword lists only; storage uses namespace/segment keys).
+preset: legacy_palace
+segment_keywords:
+  emotions:
+    - scared
+    - afraid
+    - worried
+    - happy
+    - sad
+    - love
+    - feel
+  technical:
+    - code
+    - python
+    - bug
+    - api
+    - database
+    - server
+  memory:
+    - memory
+    - remember
+    - recall
+tiers:
+  - id: t0_identity
+    role: pin
+    max_tokens: 120
+  - id: t1_essential
+    role: hot_window
+    max_chunks: 15
+    max_chars: 3200
+    max_scan: 2000
+    group_by: segment
+  - id: t2_scoped
+    role: filtered_get
+    default_limit: 10
+  - id: t3_search
+    role: vector_search
+    default_limit: 5

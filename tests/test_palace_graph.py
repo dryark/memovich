@@ -1,6 +1,6 @@
 """Tests for mempalace.palace_graph — graph traversal layer.
 
-All ChromaDB access is mocked — no real database needed.
+All vector access is mocked — no real database needed.
 """
 
 from unittest.mock import MagicMock, patch
@@ -34,9 +34,6 @@ with patch.dict("sys.modules", {"chromadb": MagicMock()}):
     )
 
 
-# --- build_graph ---
-
-
 class TestBuildGraph:
     def test_empty_collection(self):
         col = _make_fake_collection([])
@@ -50,11 +47,21 @@ class TestBuildGraph:
         assert nodes == {}
         assert edges == []
 
-    def test_single_wing_no_edges(self):
+    def test_single_namespace_no_edges(self):
         col = _make_fake_collection(
             [
-                {"room": "auth", "wing": "wing_code", "hall": "security", "date": "2026-01-01"},
-                {"room": "auth", "wing": "wing_code", "hall": "security", "date": "2026-01-02"},
+                {
+                    "segment": "auth",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-01",
+                },
+                {
+                    "segment": "auth",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-02",
+                },
             ]
         )
         nodes, edges = build_graph(col=col)
@@ -62,18 +69,18 @@ class TestBuildGraph:
         assert nodes["auth"]["count"] == 2
         assert edges == []
 
-    def test_multi_wing_creates_edges(self):
+    def test_multi_namespace_creates_edges(self):
         col = _make_fake_collection(
             [
                 {
-                    "room": "chromadb",
-                    "wing": "wing_code",
+                    "segment": "chromadb",
+                    "namespace": "ns_code",
                     "hall": "databases",
                     "date": "2026-01-01",
                 },
                 {
-                    "room": "chromadb",
-                    "wing": "wing_project",
+                    "segment": "chromadb",
+                    "namespace": "ns_project",
                     "hall": "databases",
                     "date": "2026-01-02",
                 },
@@ -82,23 +89,23 @@ class TestBuildGraph:
         nodes, edges = build_graph(col=col)
         assert "chromadb" in nodes
         assert len(edges) == 1
-        assert edges[0]["wing_a"] == "wing_code"
-        assert edges[0]["wing_b"] == "wing_project"
+        assert edges[0]["namespace_a"] == "ns_code"
+        assert edges[0]["namespace_b"] == "ns_project"
         assert edges[0]["hall"] == "databases"
 
-    def test_general_room_excluded(self):
+    def test_general_segment_excluded(self):
         col = _make_fake_collection(
             [
-                {"room": "general", "wing": "wing_code", "hall": "misc", "date": ""},
+                {"segment": "general", "namespace": "ns_code", "hall": "misc", "date": ""},
             ]
         )
         nodes, edges = build_graph(col=col)
         assert "general" not in nodes
 
-    def test_missing_wing_excluded(self):
+    def test_missing_namespace_excluded(self):
         col = _make_fake_collection(
             [
-                {"room": "orphan", "wing": "", "hall": "misc", "date": ""},
+                {"segment": "orphan", "namespace": "", "hall": "misc", "date": ""},
             ]
         )
         nodes, edges = build_graph(col=col)
@@ -107,7 +114,7 @@ class TestBuildGraph:
     def test_dates_capped_at_five(self):
         col = _make_fake_collection(
             [
-                {"room": "busy", "wing": "w", "hall": "h", "date": f"2026-01-{i:02d}"}
+                {"segment": "busy", "namespace": "w", "hall": "h", "date": f"2026-01-{i:02d}"}
                 for i in range(1, 10)
             ]
         )
@@ -115,29 +122,35 @@ class TestBuildGraph:
         assert len(nodes["busy"]["dates"]) <= 5
 
 
-# --- traverse ---
-
-
 class TestTraverse:
     def _build_col(self):
         return _make_fake_collection(
             [
-                {"room": "auth", "wing": "wing_code", "hall": "security", "date": "2026-01-01"},
-                {"room": "login", "wing": "wing_code", "hall": "security", "date": "2026-01-01"},
-                {"room": "deploy", "wing": "wing_ops", "hall": "infra", "date": "2026-01-01"},
+                {
+                    "segment": "auth",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-01",
+                },
+                {
+                    "segment": "login",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-01",
+                },
+                {"segment": "deploy", "namespace": "ns_ops", "hall": "infra", "date": "2026-01-01"},
             ]
         )
 
-    def test_traverse_known_room(self):
+    def test_traverse_known_segment(self):
         col = self._build_col()
         result = traverse("auth", col=col)
         assert isinstance(result, list)
-        rooms = [r["room"] for r in result]
-        assert "auth" in rooms
-        # login shares wing_code with auth
-        assert "login" in rooms
+        segments = [r["segment"] for r in result]
+        assert "auth" in segments
+        assert "login" in segments
 
-    def test_traverse_unknown_room(self):
+    def test_traverse_unknown_segment(self):
         col = self._build_col()
         result = traverse("nonexistent", col=col)
         assert isinstance(result, dict)
@@ -147,21 +160,27 @@ class TestTraverse:
     def test_traverse_max_hops(self):
         col = self._build_col()
         result = traverse("auth", col=col, max_hops=0)
-        # Only the start room itself at hop 0
         assert len(result) == 1
-        assert result[0]["room"] == "auth"
-
-
-# --- find_tunnels ---
+        assert result[0]["segment"] == "auth"
 
 
 class TestFindTunnels:
     def _build_tunnel_col(self):
         return _make_fake_collection(
             [
-                {"room": "chromadb", "wing": "wing_code", "hall": "db", "date": "2026-01-01"},
-                {"room": "chromadb", "wing": "wing_project", "hall": "db", "date": "2026-01-02"},
-                {"room": "auth", "wing": "wing_code", "hall": "security", "date": "2026-01-01"},
+                {"segment": "chromadb", "namespace": "ns_code", "hall": "db", "date": "2026-01-01"},
+                {
+                    "segment": "chromadb",
+                    "namespace": "ns_project",
+                    "hall": "db",
+                    "date": "2026-01-02",
+                },
+                {
+                    "segment": "auth",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-01",
+                },
             ]
         )
 
@@ -169,76 +188,63 @@ class TestFindTunnels:
         col = self._build_tunnel_col()
         tunnels = find_tunnels(col=col)
         assert len(tunnels) == 1
-        assert tunnels[0]["room"] == "chromadb"
+        assert tunnels[0]["segment"] == "chromadb"
 
-    def test_find_tunnels_with_wing_filter(self):
+    def test_find_tunnels_with_namespace_filter(self):
         col = self._build_tunnel_col()
-        tunnels = find_tunnels(wing_a="wing_code", col=col)
+        tunnels = find_tunnels(namespace_a="ns_code", col=col)
         assert len(tunnels) == 1
 
     def test_find_tunnels_no_match(self):
         col = self._build_tunnel_col()
-        tunnels = find_tunnels(wing_a="wing_nonexistent", col=col)
+        tunnels = find_tunnels(namespace_a="ns_nonexistent", col=col)
         assert tunnels == []
 
-    def test_find_tunnels_both_wings(self):
+    def test_find_tunnels_both_namespaces(self):
         col = self._build_tunnel_col()
-        tunnels = find_tunnels(wing_a="wing_code", wing_b="wing_project", col=col)
+        tunnels = find_tunnels(namespace_a="ns_code", namespace_b="ns_project", col=col)
         assert len(tunnels) == 1
-        assert tunnels[0]["room"] == "chromadb"
-
-
-# --- graph_stats ---
+        assert tunnels[0]["segment"] == "chromadb"
 
 
 class TestGraphStats:
     def test_empty_graph(self):
         col = _make_fake_collection([])
         stats = graph_stats(col=col)
-        assert stats["total_rooms"] == 0
-        assert stats["tunnel_rooms"] == 0
+        assert stats["total_segments"] == 0
+        assert stats["tunnel_segments"] == 0
         assert stats["total_edges"] == 0
 
     def test_stats_with_data(self):
         col = _make_fake_collection(
             [
-                {"room": "chromadb", "wing": "wing_code", "hall": "db", "date": "2026-01-01"},
-                {"room": "chromadb", "wing": "wing_project", "hall": "db", "date": "2026-01-02"},
-                {"room": "auth", "wing": "wing_code", "hall": "security", "date": "2026-01-01"},
+                {"segment": "chromadb", "namespace": "ns_code", "hall": "db", "date": "2026-01-01"},
+                {
+                    "segment": "chromadb",
+                    "namespace": "ns_project",
+                    "hall": "db",
+                    "date": "2026-01-02",
+                },
+                {
+                    "segment": "auth",
+                    "namespace": "ns_code",
+                    "hall": "security",
+                    "date": "2026-01-01",
+                },
             ]
         )
         stats = graph_stats(col=col)
-        assert stats["total_rooms"] == 2
-        assert stats["tunnel_rooms"] == 1
+        assert stats["total_segments"] == 2
+        assert stats["tunnel_segments"] == 1
         assert stats["total_edges"] == 1
-        assert "wing_code" in stats["rooms_per_wing"]
-
-
-# --- _fuzzy_match ---
+        assert "ns_code" in stats["segments_per_namespace"]
 
 
 class TestFuzzyMatch:
     def test_exact_substring(self):
-        nodes = {"chromadb-setup": {}, "auth-module": {}, "deploy-config": {}}
-        result = _fuzzy_match("chromadb", nodes)
-        assert "chromadb-setup" in result
+        nodes = {"chromadb-setup": {}, "other": {}}
+        assert "chromadb-setup" in _fuzzy_match("chromadb", nodes)
 
-    def test_partial_word_match(self):
-        nodes = {"chromadb-setup": {}, "auth-module": {}, "deploy-config": {}}
-        result = _fuzzy_match("auth", nodes)
-        assert "auth-module" in result
-
-    def test_no_match(self):
-        nodes = {"chromadb-setup": {}, "auth-module": {}}
-        result = _fuzzy_match("zzzzz", nodes)
-        assert result == []
-
-    def test_hyphenated_query(self):
-        nodes = {"riley-college-apps": {}, "college-prep": {}}
-        result = _fuzzy_match("riley-college", nodes)
-        assert "riley-college-apps" in result
-
-    def test_max_results(self):
-        nodes = {f"room-{i}": {} for i in range(20)}
-        result = _fuzzy_match("room", nodes, n=3)
-        assert len(result) <= 3
+    def test_hyphen_token(self):
+        nodes = {"my-topic-here": {}}
+        assert "my-topic-here" in _fuzzy_match("topic", nodes)

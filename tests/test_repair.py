@@ -46,8 +46,8 @@ def test_paginate_ids_empty():
 def test_paginate_ids_with_where():
     col = MagicMock()
     col.get.return_value = {"ids": ["id1"]}
-    repair._paginate_ids(col, where={"wing": "test"})
-    col.get.assert_called_with(where={"wing": "test"}, include=[], limit=1000, offset=0)
+    repair._paginate_ids(col, where={"namespace": "test"})
+    col.get.assert_called_with(where={"namespace": "test"}, include=[], limit=1000, offset=0)
 
 
 def test_paginate_ids_offset_exception_fallback():
@@ -66,8 +66,10 @@ def test_paginate_ids_offset_exception_fallback():
 # ── scan_palace ───────────────────────────────────────────────────────
 
 
+@patch("mempalace.config.MempalaceConfig")
 @patch("mempalace.repair.chromadb")
-def test_scan_palace_no_ids(mock_chromadb, tmp_path):
+def test_scan_palace_no_ids(mock_chromadb, mock_config_cls, tmp_path):
+    mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
     mock_col.count.return_value = 0
     mock_col.get.return_value = {"ids": []}
@@ -80,8 +82,10 @@ def test_scan_palace_no_ids(mock_chromadb, tmp_path):
     assert bad == set()
 
 
+@patch("mempalace.config.MempalaceConfig")
 @patch("mempalace.repair.chromadb")
-def test_scan_palace_all_good(mock_chromadb, tmp_path):
+def test_scan_palace_all_good(mock_chromadb, mock_config_cls, tmp_path):
+    mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
     mock_col.count.return_value = 2
     # _paginate_ids call
@@ -99,8 +103,10 @@ def test_scan_palace_all_good(mock_chromadb, tmp_path):
     assert len(bad) == 0
 
 
+@patch("mempalace.config.MempalaceConfig")
 @patch("mempalace.repair.chromadb")
-def test_scan_palace_with_bad_ids(mock_chromadb, tmp_path):
+def test_scan_palace_with_bad_ids(mock_chromadb, mock_config_cls, tmp_path):
+    mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
     mock_col.count.return_value = 2
 
@@ -126,8 +132,10 @@ def test_scan_palace_with_bad_ids(mock_chromadb, tmp_path):
     assert "bad1" in bad
 
 
+@patch("mempalace.config.MempalaceConfig")
 @patch("mempalace.repair.chromadb")
-def test_scan_palace_with_wing_filter(mock_chromadb, tmp_path):
+def test_scan_palace_with_namespace_filter(mock_chromadb, mock_config_cls, tmp_path):
+    mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
     mock_col.count.return_value = 1
     mock_col.get.side_effect = [
@@ -138,10 +146,9 @@ def test_scan_palace_with_wing_filter(mock_chromadb, tmp_path):
     mock_client.get_collection.return_value = mock_col
     mock_chromadb.PersistentClient.return_value = mock_client
 
-    repair.scan_palace(palace_path=str(tmp_path), only_wing="test_wing")
-    # Verify where filter was passed
+    repair.scan_palace(palace_path=str(tmp_path), only_namespace="test_ns")
     first_call = mock_col.get.call_args_list[0]
-    assert first_call.kwargs.get("where") == {"wing": "test_wing"}
+    assert first_call.kwargs.get("where") == {"namespace": "test_ns"}
 
 
 # ── prune_corrupt ─────────────────────────────────────────────────────

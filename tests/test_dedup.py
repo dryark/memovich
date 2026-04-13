@@ -69,7 +69,7 @@ def test_get_source_groups_source_filter():
     assert "other.txt" not in groups
 
 
-def test_get_source_groups_wing_filter():
+def test_get_source_groups_namespace_filter():
     col = MagicMock()
     col.count.return_value = 5
     col.get.side_effect = [
@@ -85,10 +85,9 @@ def test_get_source_groups_wing_filter():
         },
         {"ids": []},
     ]
-    dedup.get_source_groups(col, min_count=5, wing="my_wing")
-    # Verify where filter was passed
+    dedup.get_source_groups(col, min_count=5, namespace="my_ns")
     first_call = col.get.call_args_list[0]
-    assert first_call.kwargs.get("where") == {"wing": "my_wing"}
+    assert first_call.kwargs.get("where") == {"namespace": "my_ns"}
 
 
 def test_get_source_groups_missing_source_file():
@@ -198,8 +197,8 @@ def test_dedup_source_group_query_failure_keeps():
 # ── show_stats ────────────────────────────────────────────────────────
 
 
-@patch("mempalace.dedup.chromadb")
-def test_show_stats(mock_chromadb, tmp_path):
+@patch("mempalace.dedup.get_collection")
+def test_show_stats(mock_get_collection, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 5
     mock_col.get.side_effect = [
@@ -215,9 +214,7 @@ def test_show_stats(mock_chromadb, tmp_path):
         },
         {"ids": []},
     ]
-    mock_client = MagicMock()
-    mock_client.get_collection.return_value = mock_col
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_get_collection.return_value = mock_col
 
     dedup.show_stats(palace_path=str(tmp_path))  # should not raise
 
@@ -227,13 +224,11 @@ def test_show_stats(mock_chromadb, tmp_path):
 
 @patch("mempalace.dedup.dedup_source_group")
 @patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.chromadb")
-def test_dedup_palace_dry_run(mock_chromadb, mock_groups, mock_dedup_group, tmp_path):
+@patch("mempalace.dedup.get_collection")
+def test_dedup_palace_dry_run(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 10
-    mock_client = MagicMock()
-    mock_client.get_collection.return_value = mock_col
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_get_collection.return_value = mock_col
 
     mock_groups.return_value = {"a.txt": ["d1", "d2", "d3", "d4", "d5"]}
     mock_dedup_group.return_value = (["d1", "d2", "d3"], ["d4", "d5"])
@@ -244,28 +239,24 @@ def test_dedup_palace_dry_run(mock_chromadb, mock_groups, mock_dedup_group, tmp_
 
 @patch("mempalace.dedup.dedup_source_group")
 @patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.chromadb")
-def test_dedup_palace_with_wing(mock_chromadb, mock_groups, mock_dedup_group, tmp_path):
+@patch("mempalace.dedup.get_collection")
+def test_dedup_palace_with_namespace(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 10
-    mock_client = MagicMock()
-    mock_client.get_collection.return_value = mock_col
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_get_collection.return_value = mock_col
 
     mock_groups.return_value = {}
-    dedup.dedup_palace(palace_path=str(tmp_path), wing="test_wing", dry_run=True)
-    mock_groups.assert_called_once_with(mock_col, 5, None, wing="test_wing")
+    dedup.dedup_palace(palace_path=str(tmp_path), namespace="test_ns", dry_run=True)
+    mock_groups.assert_called_once_with(mock_col, 5, None, namespace="test_ns")
 
 
 @patch("mempalace.dedup.dedup_source_group")
 @patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.chromadb")
-def test_dedup_palace_no_groups(mock_chromadb, mock_groups, mock_dedup_group, tmp_path):
+@patch("mempalace.dedup.get_collection")
+def test_dedup_palace_no_groups(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 3
-    mock_client = MagicMock()
-    mock_client.get_collection.return_value = mock_col
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_get_collection.return_value = mock_col
 
     mock_groups.return_value = {}
     dedup.dedup_palace(palace_path=str(tmp_path), dry_run=True)

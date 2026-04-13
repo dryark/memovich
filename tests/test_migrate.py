@@ -1,48 +1,24 @@
-"""Tests for destructive-operation safety in mempalace.migrate."""
+"""Tests for mempalace.migrate helpers."""
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+import os
 
-from mempalace.migrate import migrate
+from mempalace.migrate import contains_palace_database, migrate
 
 
-def test_migrate_requires_palace_database(tmp_path, capsys):
-    palace_dir = tmp_path / "palace"
-    palace_dir.mkdir()
+def test_contains_palace_database_false(tmp_path):
+    d = tmp_path / "empty"
+    d.mkdir()
+    assert contains_palace_database(str(d)) is False
 
-    result = migrate(str(palace_dir))
 
+def test_contains_palace_database_true(tmp_path):
+    d = tmp_path / "palace"
+    d.mkdir()
+    (d / "chroma.sqlite3").write_text("x")
+    assert contains_palace_database(str(d)) is True
+
+
+def test_migrate_is_noop(capsys):
+    assert migrate(os.path.join("tmp", "any"), dry_run=True, confirm=True) is False
     out = capsys.readouterr().out
-    assert result is False
-    assert "No palace database found" in out
-
-
-def test_migrate_aborts_without_confirmation(tmp_path, capsys):
-    palace_dir = tmp_path / "palace"
-    palace_dir.mkdir()
-    # Presence of chroma.sqlite3 is the safety gate; validity is mocked below.
-    (palace_dir / "chroma.sqlite3").write_text("db")
-
-    mock_chromadb = SimpleNamespace(
-        __version__="0.6.0",
-        PersistentClient=MagicMock(side_effect=Exception("unreadable")),
-    )
-
-    with (
-        patch.dict("sys.modules", {"chromadb": mock_chromadb}),
-        patch("mempalace.migrate.detect_chromadb_version", return_value="0.5.x"),
-        patch(
-            "mempalace.migrate.extract_drawers_from_sqlite",
-            return_value=[{"id": "id1", "document": "doc", "metadata": {"wing": "w", "room": "r"}}],
-        ),
-        patch("builtins.input", return_value="n"),
-        patch("mempalace.migrate.shutil.copytree") as mock_copytree,
-        patch("mempalace.migrate.shutil.rmtree") as mock_rmtree,
-    ):
-        result = migrate(str(palace_dir))
-
-    out = capsys.readouterr().out
-    assert result is False
-    assert "Aborted." in out
-    mock_copytree.assert_not_called()
-    mock_rmtree.assert_not_called()
+    assert "removed" in out.lower()

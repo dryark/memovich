@@ -281,8 +281,8 @@ def get_user_approval(rooms: list) -> list:
 
 def save_config(project_dir: str, project_name: str, rooms: list):
     config = {
-        "wing": project_name,
-        "rooms": [
+        "namespace": project_name,
+        "segments": [
             {
                 "name": r["name"],
                 "description": r["description"],

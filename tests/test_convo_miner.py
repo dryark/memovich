@@ -3,10 +3,8 @@ import tempfile
 import shutil
 from pathlib import Path
 
-import chromadb
-
 from mempalace.convo_miner import mine_convos
-from mempalace.palace import file_already_mined
+from mempalace.palace import file_already_mined, get_collection
 
 
 def test_convo_mining():
@@ -17,10 +15,9 @@ def test_convo_mining():
         )
 
     palace_path = os.path.join(tmpdir, "palace")
-    mine_convos(tmpdir, palace_path, wing="test_convos")
+    mine_convos(tmpdir, palace_path, namespace="test_convos")
 
-    client = chromadb.PersistentClient(path=palace_path)
-    col = client.get_collection("mempalace_drawers")
+    col = get_collection(palace_path, create=False)
     assert col.count() >= 2
 
     # Verify search works
@@ -41,17 +38,16 @@ def test_mine_convos_does_not_reprocess_short_files(capsys):
         palace_path = os.path.join(tmpdir, "palace")
 
         # First run -- file is processed (sentinel written)
-        mine_convos(tmpdir, palace_path, wing="test")
+        mine_convos(tmpdir, palace_path, namespace="test")
         capsys.readouterr()  # drain output
 
         # Verify sentinel was written (resolve path -- macOS /var -> /private/var)
         resolved_file = str(Path(tmpdir).resolve() / "tiny.txt")
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers")
+        col = get_collection(palace_path, create=False)
         assert file_already_mined(col, resolved_file)
 
         # Second run -- file should be skipped
-        mine_convos(tmpdir, palace_path, wing="test")
+        mine_convos(tmpdir, palace_path, namespace="test")
         out2 = capsys.readouterr().out
         assert "Files skipped (already filed): 1" in out2
     finally:
@@ -69,8 +65,8 @@ def test_mine_convos_does_not_reprocess_empty_chunk_files(capsys):
 
         palace_path = os.path.join(tmpdir, "palace")
 
-        mine_convos(tmpdir, palace_path, wing="test")
-        mine_convos(tmpdir, palace_path, wing="test")
+        mine_convos(tmpdir, palace_path, namespace="test")
+        mine_convos(tmpdir, palace_path, namespace="test")
         out2 = capsys.readouterr().out
         assert "Files skipped (already filed): 1" in out2
     finally:

@@ -12,7 +12,7 @@ Load only what you need, when you need it.
 
 Wake-up cost: ~600-900 tokens (L0+L1). Leaves 95%+ of context free.
 
-Reads directly from ChromaDB (mempalace_drawers)
+Reads directly from the configured vector store
 and ~/.mempalace/identity.txt.
 """
 
@@ -22,8 +22,18 @@ from pathlib import Path
 from collections import defaultdict
 
 from .config import MempalaceConfig
+from .metadata_keys import NAMESPACE, SEGMENT
 from .palace import get_collection as _get_collection
 from .searcher import build_where_filter
+from .tiers.loader import load_tier_preset
+
+
+def _hot_window_tier(cfg: MempalaceConfig):
+    preset = load_tier_preset(cfg.tier_preset)
+    for tier in preset.tiers:
+        if tier.role == "hot_window":
+            return tier
+    raise RuntimeError(f"tier preset {cfg.tier_preset!r} missing hot_window tier")
 
 
 # ---------------------------------------------------------------------------
@@ -76,34 +86,35 @@ class Layer0:
 class Layer1:
     """
     ~500-800 tokens. Always loaded.
-    Auto-generated from the highest-weight / most-recent drawers in the palace.
-    Groups by room, picks the top N moments, compresses to a compact summary.
+    Auto-generated from weighted chunks; grouping comes from the tier preset.
     """
 
-    MAX_DRAWERS = 15  # at most 15 moments in wake-up
-    MAX_CHARS = 3200  # hard cap on total L1 text (~800 tokens)
-    MAX_SCAN = 2000  # don't scan more than this for L1 generation
-
-    def __init__(self, palace_path: str = None, wing: str = None):
+    def __init__(self, palace_path: str = None, namespace: str = None):
         cfg = MempalaceConfig()
         self.palace_path = palace_path or cfg.palace_path
-        self.wing = wing
+        self.namespace = namespace
+        self._tier = _hot_window_tier(cfg)
 
     def generate(self) -> str:
-        """Pull top drawers from ChromaDB and format as compact L1 text."""
+        """Pull top chunks and format as compact L1 text."""
         try:
             col = _get_collection(self.palace_path, create=False)
         except Exception:
-            return "## L1 — No palace found. Run: mempalace mine <dir>"
+            return "## L1 — No memory store found. Run: mempalace mine <dir>"
 
-        # Fetch all drawers in batches to avoid SQLite variable limit (~999)
+        max_scan = self._tier.max_scan or 2000
+        max_drawers = self._tier.max_chunks or 15
+        max_chars = self._tier.max_chars or 3200
+        group_by = self._tier.group_by or "segment"
+        group_key = NAMESPACE if group_by == "namespace" else SEGMENT
+
         _BATCH = 500
         docs, metas = [], []
         offset = 0
         while True:
             kwargs = {"include": ["documents", "metadatas"], "limit": _BATCH, "offset": offset}
-            if self.wing:
-                kwargs["where"] = {"wing": self.wing}
+            if self.namespace:
+                kwargs["where"] = {NAMESPACE: self.namespace}
             try:
                 batch = col.get(**kwargs)
             except Exception:
@@ -115,17 +126,15 @@ class Layer1:
             docs.extend(batch_docs)
             metas.extend(batch_metas)
             offset += len(batch_docs)
-            if len(batch_docs) < _BATCH or len(docs) >= self.MAX_SCAN:
+            if len(batch_docs) < _BATCH or len(docs) >= max_scan:
                 break
 
         if not docs:
             return "## L1 — No memories yet."
 
-        # Score each drawer: prefer high importance, recent filing
         scored = []
         for doc, meta in zip(docs, metas):
             importance = 3
-            # Try multiple metadata keys that might carry weight info
             for key in ("importance", "emotional_weight", "weight"):
                 val = meta.get(key)
                 if val is not None:
@@ -136,29 +145,25 @@ class Layer1:
                     break
             scored.append((importance, meta, doc))
 
-        # Sort by importance descending, take top N
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[: self.MAX_DRAWERS]
+        top = scored[:max_drawers]
 
-        # Group by room for readability
-        by_room = defaultdict(list)
+        by_bucket = defaultdict(list)
         for imp, meta, doc in top:
-            room = meta.get("room", "general")
-            by_room[room].append((imp, meta, doc))
+            bucket = meta.get(group_key, "general")
+            by_bucket[bucket].append((imp, meta, doc))
 
-        # Build compact text
         lines = ["## L1 — ESSENTIAL STORY"]
 
         total_len = 0
-        for room, entries in sorted(by_room.items()):
-            room_line = f"\n[{room}]"
-            lines.append(room_line)
-            total_len += len(room_line)
+        for bucket, entries in sorted(by_bucket.items()):
+            hdr = f"\n[{bucket}]"
+            lines.append(hdr)
+            total_len += len(hdr)
 
             for imp, meta, doc in entries:
                 source = Path(meta.get("source_file", "")).name if meta.get("source_file") else ""
 
-                # Truncate doc to keep L1 compact
                 snippet = doc.strip().replace("\n", " ")
                 if len(snippet) > 200:
                     snippet = snippet[:197] + "..."
@@ -167,7 +172,7 @@ class Layer1:
                 if source:
                     entry_line += f"  ({source})"
 
-                if total_len + len(entry_line) > self.MAX_CHARS:
+                if total_len + len(entry_line) > max_chars:
                     lines.append("  ... (more in L3 search)")
                     return "\n".join(lines)
 
@@ -185,22 +190,21 @@ class Layer1:
 class Layer2:
     """
     ~200-500 tokens per retrieval.
-    Loaded when a specific topic or wing comes up in conversation.
-    Queries ChromaDB with a wing/room filter.
+    Loaded when a specific namespace/segment comes up in conversation.
     """
 
     def __init__(self, palace_path: str = None):
         cfg = MempalaceConfig()
         self.palace_path = palace_path or cfg.palace_path
 
-    def retrieve(self, wing: str = None, room: str = None, n_results: int = 10) -> str:
-        """Retrieve drawers filtered by wing and/or room."""
+    def retrieve(self, namespace: str = None, segment: str = None, n_results: int = 10) -> str:
+        """Retrieve chunks filtered by namespace and/or segment."""
         try:
             col = _get_collection(self.palace_path, create=False)
         except Exception:
-            return "No palace found."
+            return "No memory store found."
 
-        where = build_where_filter(wing, room)
+        where = build_where_filter(namespace, segment)
 
         kwargs = {"include": ["documents", "metadatas"], "limit": n_results}
         if where:
@@ -215,19 +219,19 @@ class Layer2:
         metas = results.get("metadatas", [])
 
         if not docs:
-            label = f"wing={wing}" if wing else ""
-            if room:
-                label += f" room={room}" if label else f"room={room}"
-            return f"No drawers found for {label}."
+            label = f"namespace={namespace}" if namespace else ""
+            if segment:
+                label += f" segment={segment}" if label else f"segment={segment}"
+            return f"No chunks found for {label}."
 
-        lines = [f"## L2 — ON-DEMAND ({len(docs)} drawers)"]
+        lines = [f"## L2 — ON-DEMAND ({len(docs)} chunks)"]
         for doc, meta in zip(docs[:n_results], metas[:n_results]):
-            room_name = meta.get("room", "?")
+            seg_name = meta.get(SEGMENT, "?")
             source = Path(meta.get("source_file", "")).name if meta.get("source_file") else ""
             snippet = doc.strip().replace("\n", " ")
             if len(snippet) > 300:
                 snippet = snippet[:297] + "..."
-            entry = f"  [{room_name}] {snippet}"
+            entry = f"  [{seg_name}] {snippet}"
             if source:
                 entry += f"  ({source})"
             lines.append(entry)
@@ -242,22 +246,23 @@ class Layer2:
 
 class Layer3:
     """
-    Unlimited depth. Semantic search against the full palace.
-    Reuses searcher.py logic against mempalace_drawers.
+    Unlimited depth. Semantic search against the full vector store.
     """
 
     def __init__(self, palace_path: str = None):
         cfg = MempalaceConfig()
         self.palace_path = palace_path or cfg.palace_path
 
-    def search(self, query: str, wing: str = None, room: str = None, n_results: int = 5) -> str:
+    def search(
+        self, query: str, namespace: str = None, segment: str = None, n_results: int = 5
+    ) -> str:
         """Semantic search, returns compact result text."""
         try:
             col = _get_collection(self.palace_path, create=False)
         except Exception:
-            return "No palace found."
+            return "No memory store found."
 
-        where = build_where_filter(wing, room)
+        where = build_where_filter(namespace, segment)
 
         kwargs = {
             "query_texts": [query],
@@ -282,15 +287,15 @@ class Layer3:
         lines = [f'## L3 — SEARCH RESULTS for "{query}"']
         for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists), 1):
             similarity = round(1 - dist, 3)
-            wing_name = meta.get("wing", "?")
-            room_name = meta.get("room", "?")
+            ns_name = meta.get(NAMESPACE, "?")
+            seg_name = meta.get(SEGMENT, "?")
             source = Path(meta.get("source_file", "")).name if meta.get("source_file") else ""
 
             snippet = doc.strip().replace("\n", " ")
             if len(snippet) > 300:
                 snippet = snippet[:297] + "..."
 
-            lines.append(f"  [{i}] {wing_name}/{room_name} (sim={similarity})")
+            lines.append(f"  [{i}] {ns_name}/{seg_name} (sim={similarity})")
             lines.append(f"      {snippet}")
             if source:
                 lines.append(f"      src: {source}")
@@ -298,7 +303,7 @@ class Layer3:
         return "\n".join(lines)
 
     def search_raw(
-        self, query: str, wing: str = None, room: str = None, n_results: int = 5
+        self, query: str, namespace: str = None, segment: str = None, n_results: int = 5
     ) -> list:
         """Return raw dicts instead of formatted text."""
         try:
@@ -306,7 +311,7 @@ class Layer3:
         except Exception:
             return []
 
-        where = build_where_filter(wing, room)
+        where = build_where_filter(namespace, segment)
 
         kwargs = {
             "query_texts": [query],
@@ -330,8 +335,8 @@ class Layer3:
             hits.append(
                 {
                     "text": doc,
-                    "wing": meta.get("wing", "unknown"),
-                    "room": meta.get("room", "unknown"),
+                    "namespace": meta.get(NAMESPACE, "unknown"),
+                    "segment": meta.get(SEGMENT, "unknown"),
                     "source_file": Path(meta.get("source_file", "?")).name,
                     "similarity": round(1 - dist, 3),
                     "metadata": meta,
@@ -351,7 +356,7 @@ class MemoryStack:
 
         stack = MemoryStack()
         print(stack.wake_up())                # L0 + L1 (~600-900 tokens)
-        print(stack.recall(wing="my_app"))     # L2 on-demand
+        print(stack.recall(namespace="my_app"))     # L2 on-demand
         print(stack.search("pricing change"))  # L3 deep search
     """
 
@@ -365,13 +370,13 @@ class MemoryStack:
         self.l2 = Layer2(self.palace_path)
         self.l3 = Layer3(self.palace_path)
 
-    def wake_up(self, wing: str = None) -> str:
+    def wake_up(self, namespace: str = None) -> str:
         """
         Generate wake-up text: L0 (identity) + L1 (essential story).
         Typically ~600-900 tokens. Inject into system prompt or first message.
 
         Args:
-            wing: Optional wing filter for L1 (project-specific wake-up).
+            namespace: Optional namespace filter for L1 (project-specific wake-up).
         """
         parts = []
 
@@ -380,19 +385,21 @@ class MemoryStack:
         parts.append("")
 
         # L1: Essential Story
-        if wing:
-            self.l1.wing = wing
+        if namespace:
+            self.l1.namespace = namespace
         parts.append(self.l1.generate())
 
         return "\n".join(parts)
 
-    def recall(self, wing: str = None, room: str = None, n_results: int = 10) -> str:
-        """On-demand L2 retrieval filtered by wing/room."""
-        return self.l2.retrieve(wing=wing, room=room, n_results=n_results)
+    def recall(self, namespace: str = None, segment: str = None, n_results: int = 10) -> str:
+        """On-demand L2 retrieval filtered by namespace/segment."""
+        return self.l2.retrieve(namespace=namespace, segment=segment, n_results=n_results)
 
-    def search(self, query: str, wing: str = None, room: str = None, n_results: int = 5) -> str:
+    def search(
+        self, query: str, namespace: str = None, segment: str = None, n_results: int = 5
+    ) -> str:
         """Deep L3 semantic search."""
-        return self.l3.search(query, wing=wing, room=room, n_results=n_results)
+        return self.l3.search(query, namespace=namespace, segment=segment, n_results=n_results)
 
     def status(self) -> dict:
         """Status of all layers."""
@@ -407,10 +414,10 @@ class MemoryStack:
                 "description": "Auto-generated from top palace drawers",
             },
             "L2_on_demand": {
-                "description": "Wing/room filtered retrieval",
+                "description": "Namespace/segment filtered retrieval",
             },
             "L3_deep_search": {
-                "description": "Full semantic search via ChromaDB",
+                "description": "Full semantic vector search",
             },
         }
 
@@ -418,9 +425,9 @@ class MemoryStack:
         try:
             col = _get_collection(self.palace_path, create=False)
             count = col.count()
-            result["total_drawers"] = count
+            result["total_chunks"] = count
         except Exception:
-            result["total_drawers"] = 0
+            result["total_chunks"] = 0
 
         return result
 
@@ -437,8 +444,8 @@ if __name__ == "__main__":
         print()
         print("Usage:")
         print("  python layers.py wake-up              Show L0 + L1")
-        print("  python layers.py wake-up --wing=NAME  Wake-up for a specific project")
-        print("  python layers.py recall --wing=NAME   On-demand L2 retrieval")
+        print("  python layers.py wake-up --namespace=NAME  Wake-up for a specific project")
+        print("  python layers.py recall --namespace=NAME   On-demand L2 retrieval")
         print("  python layers.py search <query>       Deep L3 search")
         print("  python layers.py status               Show layer status")
         sys.exit(0)
@@ -462,17 +469,17 @@ if __name__ == "__main__":
     stack = MemoryStack(palace_path=palace_path)
 
     if cmd in ("wake-up", "wakeup"):
-        wing = flags.get("wing")
-        text = stack.wake_up(wing=wing)
+        namespace = flags.get("namespace")
+        text = stack.wake_up(namespace=namespace)
         tokens = len(text) // 4
         print(f"Wake-up text (~{tokens} tokens):")
         print("=" * 50)
         print(text)
 
     elif cmd == "recall":
-        wing = flags.get("wing")
-        room = flags.get("room")
-        text = stack.recall(wing=wing, room=room)
+        namespace = flags.get("namespace")
+        segment = flags.get("segment")
+        text = stack.recall(namespace=namespace, segment=segment)
         print(text)
 
     elif cmd == "search":
@@ -480,9 +487,9 @@ if __name__ == "__main__":
         if not query:
             print("Usage: python layers.py search <query>")
             sys.exit(1)
-        wing = flags.get("wing")
-        room = flags.get("room")
-        text = stack.search(query, wing=wing, room=room)
+        namespace = flags.get("namespace")
+        segment = flags.get("segment")
+        text = stack.search(query, namespace=namespace, segment=segment)
         print(text)
 
     elif cmd == "status":
