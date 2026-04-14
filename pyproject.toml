@@ -1,5 +1,5 @@
 [project]
-name = "mempalace"
+name = "memovich"
 version = "3.2.0"
 description = "Give your AI a memory — mine projects and conversations into a searchable palace. No API key required."
 readme = "README.md"
@@ -32,12 +32,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/milla-jovovich/mempalace"
-Repository = "https://github.com/milla-jovovich/mempalace"
-"Bug Tracker" = "https://github.com/milla-jovovich/mempalace/issues"
+Homepage = "https://github.com/milla-jovovich/memovich"
+Repository = "https://github.com/milla-jovovich/memovich"
+"Bug Tracker" = "https://github.com/milla-jovovich/memovich/issues"
 
 [project.scripts]
-mempalace = "mempalace:main"
+memovich = "memovich:main"
 
 [project.optional-dependencies]
 chroma = ["chromadb>=0.5.0,<0.7"]
@@ -52,7 +52,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["mempalace"]
+packages = ["memovich"]
 
 [tool.ruff]
 line-length = 100
@@ -80,7 +80,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["mempalace"]
+source = ["memovich"]
 
 [tool.coverage.report]
 fail_under = 85

@@ -1,11 +1,11 @@
 {
-  "name": "mempalace",
+  "name": "memovich",
   "interface": {
-    "displayName": "MemPalace"
+    "displayName": "Memovich"
   },
   "plugins": [
     {
-      "name": "mempalace",
+      "name": "memovich",
       "source": {
         "source": "local",
         "path": "./.codex-plugin"

@@ -1,13 +1,13 @@
 ---
 name: status
-description: Show MemPalace status — room counts, storage usage, and palace health.
+description: Show Memovich status — room counts, storage usage, and palace health.
 allowed-tools: Bash, Read
 ---
 
-# MemPalace Status
+# Memovich Status
 
 Run the following command and follow the returned instructions step by step:
 
 ```bash
-mempalace instructions status
+memovich instructions status
 ```

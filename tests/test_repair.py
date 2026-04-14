@@ -1,16 +1,16 @@
-"""Tests for mempalace.repair — scan, prune, and rebuild HNSW index."""
+"""Tests for memovich.repair — scan, prune, and rebuild HNSW index."""
 
 import os
 from unittest.mock import MagicMock, patch
 
 
-from mempalace import repair
+from memovich import repair
 
 
 # ── _get_palace_path ──────────────────────────────────────────────────
 
 
-@patch("mempalace.repair.MempalaceConfig", create=True)
+@patch("memovich.repair.MemovichConfig", create=True)
 def test_get_palace_path_from_config(mock_config_cls):
     mock_config_cls.return_value.palace_path = "/configured/palace"
     with patch.dict("sys.modules", {}):
@@ -20,10 +20,10 @@ def test_get_palace_path_from_config(mock_config_cls):
 
 
 def test_get_palace_path_fallback():
-    with patch("mempalace.repair._get_palace_path") as mock_get:
-        mock_get.return_value = os.path.join(os.path.expanduser("~"), ".mempalace", "palace")
+    with patch("memovich.repair._get_palace_path") as mock_get:
+        mock_get.return_value = os.path.join(os.path.expanduser("~"), ".memovich", "palace")
         result = mock_get()
-        assert ".mempalace" in result
+        assert ".memovich" in result
 
 
 # ── _paginate_ids ─────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ def test_paginate_ids_offset_exception_fallback():
 # ── scan_palace ───────────────────────────────────────────────────────
 
 
-@patch("mempalace.config.MempalaceConfig")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.config.MemovichConfig")
+@patch("memovich.repair.chromadb")
 def test_scan_palace_no_ids(mock_chromadb, mock_config_cls, tmp_path):
     mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
@@ -82,8 +82,8 @@ def test_scan_palace_no_ids(mock_chromadb, mock_config_cls, tmp_path):
     assert bad == set()
 
 
-@patch("mempalace.config.MempalaceConfig")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.config.MemovichConfig")
+@patch("memovich.repair.chromadb")
 def test_scan_palace_all_good(mock_chromadb, mock_config_cls, tmp_path):
     mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
@@ -103,8 +103,8 @@ def test_scan_palace_all_good(mock_chromadb, mock_config_cls, tmp_path):
     assert len(bad) == 0
 
 
-@patch("mempalace.config.MempalaceConfig")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.config.MemovichConfig")
+@patch("memovich.repair.chromadb")
 def test_scan_palace_with_bad_ids(mock_chromadb, mock_config_cls, tmp_path):
     mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
@@ -132,8 +132,8 @@ def test_scan_palace_with_bad_ids(mock_chromadb, mock_config_cls, tmp_path):
     assert "bad1" in bad
 
 
-@patch("mempalace.config.MempalaceConfig")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.config.MemovichConfig")
+@patch("memovich.repair.chromadb")
 def test_scan_palace_with_namespace_filter(mock_chromadb, mock_config_cls, tmp_path):
     mock_config_cls.return_value.vector_backend = "chroma"
     mock_col = MagicMock()
@@ -154,13 +154,13 @@ def test_scan_palace_with_namespace_filter(mock_chromadb, mock_config_cls, tmp_p
 # ── prune_corrupt ─────────────────────────────────────────────────────
 
 
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.chromadb")
 def test_prune_corrupt_no_file(mock_chromadb, tmp_path):
     # Should print message and return without error
     repair.prune_corrupt(palace_path=str(tmp_path))
 
 
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.chromadb")
 def test_prune_corrupt_dry_run(mock_chromadb, tmp_path):
     bad_file = tmp_path / "corrupt_ids.txt"
     bad_file.write_text("bad1\nbad2\n")
@@ -169,7 +169,7 @@ def test_prune_corrupt_dry_run(mock_chromadb, tmp_path):
     mock_chromadb.PersistentClient.assert_not_called()
 
 
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.chromadb")
 def test_prune_corrupt_confirmed(mock_chromadb, tmp_path):
     bad_file = tmp_path / "corrupt_ids.txt"
     bad_file.write_text("bad1\nbad2\n")
@@ -184,7 +184,7 @@ def test_prune_corrupt_confirmed(mock_chromadb, tmp_path):
     mock_col.delete.assert_called_once()
 
 
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.chromadb")
 def test_prune_corrupt_delete_failure_fallback(mock_chromadb, tmp_path):
     bad_file = tmp_path / "corrupt_ids.txt"
     bad_file.write_text("bad1\nbad2\n")
@@ -204,15 +204,15 @@ def test_prune_corrupt_delete_failure_fallback(mock_chromadb, tmp_path):
 # ── rebuild_index ─────────────────────────────────────────────────────
 
 
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.chromadb")
 def test_rebuild_index_no_palace(mock_chromadb, tmp_path):
     nonexistent = str(tmp_path / "nope")
     repair.rebuild_index(palace_path=nonexistent)
     mock_chromadb.PersistentClient.assert_not_called()
 
 
-@patch("mempalace.repair.shutil")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.shutil")
+@patch("memovich.repair.chromadb")
 def test_rebuild_index_empty_palace(mock_chromadb, mock_shutil, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 0
@@ -224,8 +224,8 @@ def test_rebuild_index_empty_palace(mock_chromadb, mock_shutil, tmp_path):
     mock_client.delete_collection.assert_not_called()
 
 
-@patch("mempalace.repair.shutil")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.shutil")
+@patch("memovich.repair.chromadb")
 def test_rebuild_index_success(mock_chromadb, mock_shutil, tmp_path):
     # Create a fake sqlite file
     sqlite_path = tmp_path / "chroma.sqlite3"
@@ -252,9 +252,9 @@ def test_rebuild_index_success(mock_chromadb, mock_shutil, tmp_path):
     assert "chroma.sqlite3" in str(mock_shutil.copy2.call_args)
 
     # Verify: deleted and recreated with cosine
-    mock_client.delete_collection.assert_called_once_with("mempalace_drawers")
+    mock_client.delete_collection.assert_called_once_with("memovich_chunks")
     mock_client.create_collection.assert_called_once_with(
-        "mempalace_drawers", metadata={"hnsw:space": "cosine"}
+        "memovich_chunks", metadata={"hnsw:space": "cosine"}
     )
 
     # Verify: used upsert not add
@@ -262,8 +262,8 @@ def test_rebuild_index_success(mock_chromadb, mock_shutil, tmp_path):
     mock_new_col.add.assert_not_called()
 
 
-@patch("mempalace.repair.shutil")
-@patch("mempalace.repair.chromadb")
+@patch("memovich.repair.shutil")
+@patch("memovich.repair.chromadb")
 def test_rebuild_index_error_reading(mock_chromadb, mock_shutil, tmp_path):
     mock_client = MagicMock()
     mock_client.get_collection.side_effect = Exception("corrupt")

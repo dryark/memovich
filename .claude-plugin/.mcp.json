@@ -1,9 +1,9 @@
 {
-  "mempalace": {
+  "memovich": {
     "command": "python3",
     "args": [
       "-m",
-      "mempalace.mcp_server"
+      "memovich.mcp_server"
     ]
   }
 }

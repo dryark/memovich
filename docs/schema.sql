@@ -1,5 +1,5 @@
--- MemPalace Knowledge Graph Schema
--- SQLite database at ~/.mempalace/knowledge_graph.db
+-- Memovich Knowledge Graph Schema
+-- SQLite database at ~/.memovich/knowledge_graph.db
 
 CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY,

@@ -8,7 +8,7 @@ Tests cover all 4 pipeline stages:
   Step 4: tail truncation (fallback)
 """
 
-from mempalace.query_sanitizer import (
+from memovich.query_sanitizer import (
     MAX_QUERY_LENGTH,
     MIN_QUERY_LENGTH,
     SAFE_QUERY_LENGTH,
@@ -77,11 +77,11 @@ class TestQuestionExtraction:
     def test_question_in_system_prompt_ignored_when_real_question_exists(self):
         # System prompt contains a question, but real query also has one
         system_prompt = "Are you ready to help? " * 30 + "\n"
-        real_query = "What databases does MemPalace support?"
+        real_query = "What databases does Memovich support?"
         query = system_prompt + real_query
         result = sanitize_query(query)
         assert result["was_sanitized"] is True
-        assert "MemPalace" in result["clean_query"] or "database" in result["clean_query"].lower()
+        assert "Memovich" in result["clean_query"] or "database" in result["clean_query"].lower()
 
 
 class TestTailSentence:
@@ -97,10 +97,10 @@ class TestTailSentence:
 
     def test_keyword_style_query(self):
         system_prompt = "System configuration loaded. " * 60
-        query = system_prompt + "\nMemPalace ChromaDB integration setup"
+        query = system_prompt + "\nMemovich ChromaDB integration setup"
         result = sanitize_query(query)
         assert result["was_sanitized"] is True
-        assert "MemPalace" in result["clean_query"] or "ChromaDB" in result["clean_query"]
+        assert "Memovich" in result["clean_query"] or "ChromaDB" in result["clean_query"]
 
     def test_long_candidate_uses_last_sentence_fragment(self):
         query = ("Prompt sentence. " * 30) + "Final search intent for architecture migration"
@@ -193,10 +193,10 @@ class TestMetadata:
 class TestRealWorldScenarios:
     """Simulate realistic system prompt contamination patterns."""
 
-    def test_mempalace_wakeup_prepended(self):
-        """Simulates mempalace wake-up output prepended to a query."""
+    def test_memovich_wakeup_prepended(self):
+        """Simulates memovich wake-up output prepended to a query."""
         wakeup = (
-            "MemPalace loaded. Wings: technical, emotions, identity. "
+            "Memovich loaded. Wings: technical, emotions, identity. "
             "Rooms: chromadb-setup, error-handling, project-planning. "
             "Total drawers: 234. Knowledge graph: 89 entities, 156 triples. "
             "AAAK dialect active. Protocol: verify before responding. "
@@ -227,7 +227,7 @@ class TestRealWorldScenarios:
     def test_2000_char_system_prompt_with_question(self):
         """The exact scenario from Issue #333 — 2000 chars prepended."""
         system_prompt = "You are an AI assistant with access to tools. " * 45  # ~2000 chars
-        real_query = "What is the status of the MemPalace project?"
+        real_query = "What is the status of the Memovich project?"
         query = system_prompt + real_query
         result = sanitize_query(query)
         assert result["was_sanitized"] is True

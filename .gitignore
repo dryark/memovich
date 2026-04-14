@@ -4,7 +4,7 @@ build/
 __pycache__/
 *.pyc
 .pytest_cache/
-mempal.yaml
+memovich.yaml
 .a5c/
 .claude/
 .codex/

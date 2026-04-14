@@ -6,7 +6,7 @@ This system uses tiered memory organization.
 
 **Raw verbatim storage** — Memovich stores your exchanges in a vector store without summarization or extraction.
 
-**AAAK** — A crappy abbreviation system that is legacy from MemPalace. Will be stripped out.
+**AAAK** — A crappy abbreviation system that is legacy from Memovich. Will be stripped out.
 
 ## Quick Start
 
@@ -275,13 +275,13 @@ Two hooks for Claude Code that automatically save memories during work:
 ```json
 {
   "hooks": {
-    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/memovich/hooks/mempal_save_hook.sh"}]}],
-    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/memovich/hooks/mempal_precompact_hook.sh"}]}]
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/memovich/hooks/memovich_save_hook.sh"}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/memovich/hooks/memovich_precompact_hook.sh"}]}]
   }
 }
 ```
 
-**Optional auto-ingest:** Set the `MEMPAL_DIR` environment variable to a directory path and the hooks will automatically run `mempalace mine` on that directory during each save trigger (background on stop, synchronous on precompact).
+**Optional auto-ingest:** Set the `MEMOVICH_DIR` environment variable to a directory path and the hooks will automatically run `memovich mine` on that directory during each save trigger (background on stop, synchronous on precompact).
 
 ## All Commands
 

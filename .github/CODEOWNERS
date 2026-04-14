@@ -2,7 +2,7 @@
 * @milla-jovovich @bensig @igorls
 
 # Core library
-mempalace/ @milla-jovovich @bensig
+memovich/ @milla-jovovich @bensig
 
 # CI and workflows
 .github/ @bensig

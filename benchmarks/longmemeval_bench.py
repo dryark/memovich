@@ -103,7 +103,7 @@ def _make_embed_fn(model_name: str):
         return None
 
 
-def _fresh_collection(name="mempal_drawers"):
+def _fresh_collection(name="memovich_chunks"):
     """Delete and recreate collection for a clean slate between queries."""
     global _bench_embed_fn
     try:
@@ -207,7 +207,7 @@ def build_palace_and_retrieve_aaak(entry, granularity="session", n_results=50):
     Query still uses raw question text — tests whether compressed representations
     retain enough semantic signal for retrieval.
     """
-    from mempalace.dialect import Dialect
+    from memovich.dialect import Dialect
 
     dialect = Dialect()
 
@@ -863,7 +863,7 @@ def build_palace_and_retrieve_hybrid_v2(
         top_ids = [corpus_ids[i] for i in top_indices]
         top_ts = [corpus_timestamps[i] for i in top_indices]
 
-        collection2 = _fresh_collection("mempal_drawers_pass2")
+        collection2 = _fresh_collection("memovich_chunks_pass2")
         collection2.add(
             documents=top_corpus_full,
             ids=[f"doc2_{i}" for i in range(len(top_corpus_full))],
@@ -1199,7 +1199,7 @@ def build_palace_and_retrieve_hybrid_v3(
         top_ids = [corpus_ids[i] for i in top_indices]
         top_ts = [corpus_timestamps[i] for i in top_indices]
 
-        collection2 = _fresh_collection("mempal_drawers_pass2")
+        collection2 = _fresh_collection("memovich_chunks_pass2")
         collection2.add(
             documents=top_corpus_full,
             ids=[f"doc2_{i}" for i in range(len(top_corpus_full))],
@@ -2242,7 +2242,7 @@ def build_palace_and_retrieve_palace(
 
     # Only do Pass 1 for specific halls (not GENERAL — too broad to be useful)
     if primary_hall != HALL_GENERAL and len(pass1_docs) >= 1:
-        coll1 = _fresh_collection("mempal_hall")
+        coll1 = _fresh_collection("memovich_hall")
         coll1.add(
             documents=pass1_docs,
             ids=[f"h_{i}" for i in range(len(pass1_docs))],
@@ -3317,7 +3317,7 @@ if __name__ == "__main__":
         embed_tag = f"_{args.embed_model}" if args.embed_model != "default" else ""
         suffix = "_llmrerank" if args.llm_rerank else ""
         subset_tag = f"_{split_subset}" if split_subset else ""
-        args.out = f"benchmarks/results_mempal_{args.mode}{embed_tag}{suffix}{subset_tag}_{args.granularity}_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
+        args.out = f"benchmarks/results_memovich_{args.mode}{embed_tag}{suffix}{subset_tag}_{args.granularity}_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
 
     # Set global embedding function before running
     if args.embed_model != "default":

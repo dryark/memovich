@@ -1,1 +1,1 @@
-# MemPalace scale benchmark suite
+# Memovich scale benchmark suite

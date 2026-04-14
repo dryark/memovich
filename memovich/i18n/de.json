@@ -1,0 +1,44 @@
+{
+  "lang": "de",
+  "label": "Deutsch",
+  "terms": {
+    "palace": "Palast",
+    "wing": "Flügel",
+    "hall": "Flur",
+    "closet": "Schrank",
+    "drawer": "Schublade",
+    "mine": "schürfen",
+    "search": "suchen",
+    "status": "Status",
+    "init": "initialisieren",
+    "repair": "reparieren",
+    "migrate": "migrieren",
+    "entity": "Entität",
+    "topic": "Thema"
+  },
+  "cli": {
+    "mine_start": "Schürfe {path}...",
+    "mine_complete": "Fertig. {closets} Schränke, {drawers} Schubladen erstellt.",
+    "mine_skip": "Bereits geschürft. Verwenden Sie --force zum Wiederholen.",
+    "search_no_results": "Keine Ergebnisse für: {query}",
+    "search_results": "{count} Ergebnisse gefunden:",
+    "status_palace": "Palast: {path}",
+    "status_wings": "{count} Flügel",
+    "status_closets": "{count} Schränke",
+    "status_drawers": "{count} Schubladen",
+    "init_complete": "Palast initialisiert in {path}",
+    "init_exists": "Palast existiert bereits in {path}",
+    "repair_complete": "Reparatur abgeschlossen. {fixed} Probleme behoben.",
+    "migrate_complete": "Migration abgeschlossen.",
+    "no_palace": "Kein Palast gefunden. Ausführen: memovich init <Ordner>"
+  },
+  "aaak": {
+    "instruction": "Auf Deutsch komprimieren. Bindestriche zwischen Wörtern, Pipes zwischen Konzepten. Artikel und Füllwörter weglassen. Eigennamen und Zahlen exakt beibehalten."
+  },
+  "regex": {
+    "topic_pattern": "[A-ZÄÖÜß][a-zäöüß]{2,}|[A-Za-zÄÖÜäöüß]{3,}",
+    "stop_words": "der die das ein eine eines einer einem einen den dem des und oder aber denn weil wenn als ob auch noch schon sehr viel nur nicht mehr kann wird hat ist sind war waren sein haben wurde mit von zu für auf in an um über nach durch",
+    "quote_pattern": "\\u201E([^\\u201C]{10,200})\\u201C|\"([^\"]{10,200})\"",
+    "action_pattern": "(?:gebaut|behoben|geschrieben|hinzugefügt|gepusht|gemessen|getestet|überprüft|erstellt|gelöscht|aktualisiert|konfiguriert|bereitgestellt|migriert)\\s+[\\wÄÖÜäöüß\\s]{3,30}"
+  }
+}

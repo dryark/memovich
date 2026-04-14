@@ -5,8 +5,8 @@ from pathlib import Path
 
 import yaml
 
-from mempalace.miner import mine
-from mempalace.exporter import export_palace
+from memovich.miner import mine
+from memovich.exporter import export_palace
 
 
 def write_file(path: Path, content: str):
@@ -25,7 +25,7 @@ def _setup_palace(tmpdir):
     os.makedirs(project_a / "frontend")
     write_file(project_a / "backend" / "server.py", "def serve():\n    return 'ok'\n" * 20)
     write_file(project_a / "frontend" / "app.js", "function render() { return 'hi'; }\n" * 20)
-    with open(project_a / "mempalace.yaml", "w") as f:
+    with open(project_a / "memovich.yaml", "w") as f:
         yaml.dump(
             {
                 "namespace": "alpha",
@@ -40,7 +40,7 @@ def _setup_palace(tmpdir):
     # Project B: namespace=beta, segments=docs
     os.makedirs(project_b / "docs")
     write_file(project_b / "docs" / "guide.md", "# Guide\n\nThis explains things.\n" * 20)
-    with open(project_b / "mempalace.yaml", "w") as f:
+    with open(project_b / "memovich.yaml", "w") as f:
         yaml.dump(
             {
                 "namespace": "beta",

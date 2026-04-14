@@ -3,8 +3,8 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from mempalace.convo_miner import mine_convos
-from mempalace.palace import file_already_mined, get_collection
+from memovich.convo_miner import mine_convos
+from memovich.palace import file_already_mined, get_collection
 
 
 def test_convo_mining():

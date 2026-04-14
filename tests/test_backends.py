@@ -3,7 +3,7 @@ import sqlite3
 import chromadb
 import pytest
 
-from mempalace.backends.chroma import ChromaBackend, ChromaCollection, _fix_blob_seq_ids
+from memovich.backends.chroma import ChromaBackend, ChromaCollection, _fix_blob_seq_ids
 
 
 class _FakeCollection:
@@ -59,7 +59,7 @@ def test_chroma_backend_create_false_raises_without_creating_directory(tmp_path)
     with pytest.raises(FileNotFoundError):
         ChromaBackend().get_collection(
             str(palace_path),
-            collection_name="mempalace_drawers",
+            collection_name="memovich_chunks",
             create=False,
         )
 
@@ -71,7 +71,7 @@ def test_chroma_backend_create_true_creates_directory_and_collection(tmp_path):
 
     collection = ChromaBackend().get_collection(
         str(palace_path),
-        collection_name="mempalace_drawers",
+        collection_name="memovich_chunks",
         create=True,
     )
 
@@ -79,7 +79,7 @@ def test_chroma_backend_create_true_creates_directory_and_collection(tmp_path):
     assert isinstance(collection, ChromaCollection)
 
     client = chromadb.PersistentClient(path=str(palace_path))
-    client.get_collection("mempalace_drawers")
+    client.get_collection("memovich_chunks")
 
 
 def test_fix_blob_seq_ids_converts_blobs_to_integers(tmp_path):

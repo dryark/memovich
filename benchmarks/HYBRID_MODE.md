@@ -445,7 +445,7 @@ All five `PersistentClient + tmpdir` patterns replaced with a module-level singl
 ```python
 _bench_client = chromadb.EphemeralClient()
 
-def _fresh_collection(name="mempal_drawers"):
+def _fresh_collection(name="memovich_chunks"):
     try:
         _bench_client.delete_collection(name)
     except Exception:

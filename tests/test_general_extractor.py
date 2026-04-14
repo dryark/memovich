@@ -1,6 +1,6 @@
-"""Tests for mempalace.general_extractor."""
+"""Tests for memovich.general_extractor."""
 
-from mempalace.general_extractor import (
+from memovich.general_extractor import (
     ALL_MARKERS,
     NEGATIVE_WORDS,
     POSITIVE_WORDS,

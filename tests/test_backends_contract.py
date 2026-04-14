@@ -1,13 +1,13 @@
 """Contract tests for vector backends (memory by default in tests)."""
 
-from mempalace.backends.memory import MemoryBackend
-from mempalace.embeddings import embed_texts
-from mempalace.metadata_keys import NAMESPACE, SEGMENT
+from memovich.backends.memory import MemoryBackend
+from memovich.embeddings import embed_texts
+from memovich.metadata_keys import NAMESPACE, SEGMENT
 
 
 def test_memory_collection_roundtrip():
     backend = MemoryBackend(embed_fn=embed_texts)
-    col = backend.get_collection("/tmp/mp_contract_palace", "mempalace_drawers", create=True)
+    col = backend.get_collection("/tmp/mp_contract_palace", "memovich_chunks", create=True)
     col.delete()
 
     col.add(

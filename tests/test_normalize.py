@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from mempalace.normalize import (
+from memovich.normalize import (
     _extract_content,
     _format_tool_result,
     _format_tool_use,
@@ -206,11 +206,11 @@ def test_format_tool_use_unknown_tool():
     block = {
         "type": "tool_use",
         "id": "t1",
-        "name": "mcp__mempalace__search",
+        "name": "mcp__memovich__search",
         "input": {"query": "firmware probe", "limit": 5},
     }
     result = _format_tool_use(block)
-    assert result.startswith("[mcp__mempalace__search]")
+    assert result.startswith("[mcp__memovich__search]")
     assert "firmware probe" in result
 
 
@@ -303,7 +303,7 @@ def test_format_tool_result_glob_caps_at_20():
 
 def test_format_tool_result_unknown_short():
     """Unknown tool with short output is kept."""
-    result = _format_tool_result("some output", "mcp__mempalace__search")
+    result = _format_tool_result("some output", "mcp__memovich__search")
     assert result == "→ some output"
 
 
@@ -819,7 +819,7 @@ def test_try_normalize_json_valid_but_unknown_schema():
 
 def test_messages_to_transcript_basic():
     msgs = [("user", "Q"), ("assistant", "A")]
-    with patch("mempalace.normalize.spellcheck_user_text", side_effect=lambda x: x, create=True):
+    with patch("memovich.normalize.spellcheck_user_text", side_effect=lambda x: x, create=True):
         result = _messages_to_transcript(msgs, spellcheck=False)
     assert "> Q" in result
     assert "A" in result
@@ -1042,7 +1042,7 @@ def test_claude_code_jsonl_thinking_blocks_ignored():
 
 def test_normalize_rejects_large_file():
     """Files over 500 MB should raise IOError before reading."""
-    with patch("mempalace.normalize.os.path.getsize", return_value=600 * 1024 * 1024):
+    with patch("memovich.normalize.os.path.getsize", return_value=600 * 1024 * 1024):
         try:
             normalize("/fake/huge_file.txt")
             assert False, "Should have raised IOError"

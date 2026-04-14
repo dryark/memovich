@@ -1,9 +1,9 @@
-"""Tests for mempalace.dedup — near-duplicate drawer detection and removal."""
+"""Tests for memovich.dedup — near-duplicate drawer detection and removal."""
 
 from unittest.mock import MagicMock, patch
 
 
-from mempalace import dedup
+from memovich import dedup
 
 
 # ── get_source_groups ─────────────────────────────────────────────────
@@ -197,7 +197,7 @@ def test_dedup_source_group_query_failure_keeps():
 # ── show_stats ────────────────────────────────────────────────────────
 
 
-@patch("mempalace.dedup.get_collection")
+@patch("memovich.dedup.get_collection")
 def test_show_stats(mock_get_collection, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 5
@@ -222,9 +222,9 @@ def test_show_stats(mock_get_collection, tmp_path):
 # ── dedup_palace ──────────────────────────────────────────────────────
 
 
-@patch("mempalace.dedup.dedup_source_group")
-@patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.get_collection")
+@patch("memovich.dedup.dedup_source_group")
+@patch("memovich.dedup.get_source_groups")
+@patch("memovich.dedup.get_collection")
 def test_dedup_palace_dry_run(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 10
@@ -237,9 +237,9 @@ def test_dedup_palace_dry_run(mock_get_collection, mock_groups, mock_dedup_group
     mock_dedup_group.assert_called_once()
 
 
-@patch("mempalace.dedup.dedup_source_group")
-@patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.get_collection")
+@patch("memovich.dedup.dedup_source_group")
+@patch("memovich.dedup.get_source_groups")
+@patch("memovich.dedup.get_collection")
 def test_dedup_palace_with_namespace(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 10
@@ -250,9 +250,9 @@ def test_dedup_palace_with_namespace(mock_get_collection, mock_groups, mock_dedu
     mock_groups.assert_called_once_with(mock_col, 5, None, namespace="test_ns")
 
 
-@patch("mempalace.dedup.dedup_source_group")
-@patch("mempalace.dedup.get_source_groups")
-@patch("mempalace.dedup.get_collection")
+@patch("memovich.dedup.dedup_source_group")
+@patch("memovich.dedup.get_source_groups")
+@patch("memovich.dedup.get_collection")
 def test_dedup_palace_no_groups(mock_get_collection, mock_groups, mock_dedup_group, tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 3

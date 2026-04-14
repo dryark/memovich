@@ -6,8 +6,8 @@ from pathlib import Path
 import chromadb
 import yaml
 
-from mempalace.miner import mine, scan_project, status
-from mempalace.palace import file_already_mined, get_collection
+from memovich.miner import mine, scan_project, status
+from memovich.palace import file_already_mined, get_collection
 
 
 def write_file(path: Path, content: str):
@@ -29,7 +29,7 @@ def test_project_mining():
         write_file(
             project_root / "backend" / "app.py", "def main():\n    print('hello world')\n" * 20
         )
-        with open(project_root / "mempalace.yaml", "w") as f:
+        with open(project_root / "memovich.yaml", "w") as f:
             yaml.dump(
                 {
                     "namespace": "test_project",
@@ -214,7 +214,7 @@ def test_file_already_mined_check_mtime():
         palace_path = os.path.join(tmpdir, "palace")
         os.makedirs(palace_path)
         client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_or_create_collection("mempalace_drawers")
+        col = client.get_or_create_collection("memovich_chunks")
 
         test_file = os.path.join(tmpdir, "test.txt")
         with open(test_file, "w") as f:
@@ -271,7 +271,7 @@ def test_mine_dry_run_with_tiny_file_no_crash():
         write_file(project_root / "good.py", "def main():\n    print('hello world')\n" * 20)
         write_file(project_root / "tiny.txt", "x")
 
-        with open(project_root / "mempalace.yaml", "w") as f:
+        with open(project_root / "memovich.yaml", "w") as f:
             yaml.dump(
                 {
                     "namespace": "test_project",

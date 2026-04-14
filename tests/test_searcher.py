@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mempalace.searcher import SearchError, search, search_memories
+from memovich.searcher import SearchError, search, search_memories
 
 
 # ── search_memories (API) ──────────────────────────────────────────────
@@ -41,7 +41,7 @@ class TestSearchMemories:
         assert len(result["results"]) <= 2
 
     def test_no_palace_returns_error(self, tmp_path):
-        with patch("mempalace.searcher.get_collection", side_effect=Exception("missing")):
+        with patch("memovich.searcher.get_collection", side_effect=Exception("missing")):
             result = search_memories("anything", str(tmp_path / "missing"))
         assert "error" in result
 
@@ -60,7 +60,7 @@ class TestSearchMemories:
         mock_col = MagicMock()
         mock_col.query.side_effect = RuntimeError("query failed")
 
-        with patch("mempalace.searcher.get_collection", return_value=mock_col):
+        with patch("memovich.searcher.get_collection", return_value=mock_col):
             result = search_memories("test", "/fake/path")
         assert "error" in result
         assert "query failed" in result["error"]
@@ -97,7 +97,7 @@ class TestSearchCLI:
         assert "Segment:" in captured.out
 
     def test_search_no_palace_raises(self, tmp_path):
-        with patch("mempalace.searcher.get_collection", side_effect=Exception("missing")):
+        with patch("memovich.searcher.get_collection", side_effect=Exception("missing")):
             with pytest.raises(SearchError, match="No memory store found"):
                 search("anything", str(tmp_path / "missing"))
 
@@ -114,7 +114,7 @@ class TestSearchCLI:
         mock_col = MagicMock()
         mock_col.query.side_effect = RuntimeError("boom")
 
-        with patch("mempalace.searcher.get_collection", return_value=mock_col):
+        with patch("memovich.searcher.get_collection", return_value=mock_col):
             with pytest.raises(SearchError, match="Search error"):
                 search("test", "/fake/path")
 

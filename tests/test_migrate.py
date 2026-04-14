@@ -1,8 +1,8 @@
-"""Tests for mempalace.migrate helpers."""
+"""Tests for memovich.migrate helpers."""
 
 import os
 
-from mempalace.migrate import contains_palace_database, migrate
+from memovich.migrate import contains_palace_database, migrate
 
 
 def test_contains_palace_database_false(tmp_path):

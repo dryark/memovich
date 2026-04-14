@@ -689,15 +689,15 @@ def run_benchmark(
                 f"{len(sessions)} sessions, {len(corpus)} docs, {len(qa_pairs)} questions"
             )
 
-        tmpdir = tempfile.mkdtemp(prefix="mempal_locomo_")
+        tmpdir = tempfile.mkdtemp(prefix="memovich_locomo_")
         palace_path = os.path.join(tmpdir, "palace")
 
         try:
             client = chromadb.PersistentClient(path=palace_path)
-            collection = client.create_collection("mempal_drawers")
+            collection = client.create_collection("memovich_chunks")
 
             if mode == "aaak":
-                from mempalace.dialect import Dialect
+                from memovich.dialect import Dialect
 
                 dialect = Dialect()
                 docs_to_ingest = [dialect.compress(doc) for doc in corpus]

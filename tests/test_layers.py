@@ -1,16 +1,16 @@
-"""Tests for mempalace.layers — Layer0, Layer1, Layer2, Layer3, MemoryStack."""
+"""Tests for memovich.layers — Layer0, Layer1, Layer2, Layer3, MemoryStack."""
 
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mempalace.layers import Layer0, Layer1, Layer2, Layer3, MemoryStack
+from memovich.layers import Layer0, Layer1, Layer2, Layer3, MemoryStack
 
 
 @pytest.fixture(autouse=True)
 def _stub_tier_preset():
-    """Avoid loading real YAML while MempalaceConfig is mocked in unit tests."""
+    """Avoid loading real YAML while MemovichConfig is mocked in unit tests."""
     hot = MagicMock()
     hot.role = "hot_window"
     hot.max_scan = 2000
@@ -19,7 +19,7 @@ def _stub_tier_preset():
     hot.group_by = "segment"
     preset = MagicMock()
     preset.tiers = [hot]
-    with patch("mempalace.layers.load_tier_preset", return_value=preset):
+    with patch("memovich.layers.load_tier_preset", return_value=preset):
         yield
 
 
@@ -80,7 +80,7 @@ def test_layer0_strips_whitespace(tmp_path):
 
 def test_layer0_default_path():
     layer = Layer0()
-    expected = os.path.expanduser("~/.mempalace/identity.txt")
+    expected = os.path.expanduser("~/.memovich/identity.txt")
     assert layer.path == expected
 
 
@@ -101,8 +101,8 @@ def _mock_chromadb_for_layer(docs, metas, monkeypatch=None):
 def test_layer1_no_palace():
     """Layer1 returns helpful message when no palace exists."""
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer1(palace_path="/nonexistent/palace")
@@ -122,8 +122,8 @@ def test_layer1_generates_essential_story():
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -137,8 +137,8 @@ def test_layer1_empty_palace():
     mock_col = MagicMock()
     mock_col.get.return_value = {"documents": [], "metadatas": []}
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -153,8 +153,8 @@ def test_layer1_with_namespace_filter():
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake", namespace="project_x")
@@ -172,8 +172,8 @@ def test_layer1_truncates_long_snippets():
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -195,9 +195,9 @@ def test_layer1_respects_max_chars():
     tier.group_by = "segment"
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
-        patch("mempalace.layers._hot_window_tier", return_value=tier),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers._hot_window_tier", return_value=tier),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -217,8 +217,8 @@ def test_layer1_importance_from_various_keys():
     mock_col = _mock_chromadb_for_layer(docs, metas)
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -235,8 +235,8 @@ def test_layer1_batch_exception_breaks():
         RuntimeError("batch error"),
     ]
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer1(palace_path="/fake")
@@ -250,8 +250,8 @@ def test_layer1_batch_exception_breaks():
 
 def test_layer2_no_palace():
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer2(palace_path="/nonexistent/palace")
@@ -266,8 +266,8 @@ def test_layer2_retrieve_with_namespace():
         "metadatas": [{"segment": "backend", "source_file": "notes.txt"}],
     }
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -284,8 +284,8 @@ def test_layer2_retrieve_with_room():
         "metadatas": [{"segment": "architecture", "source_file": "arch.txt"}],
     }
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -301,8 +301,8 @@ def test_layer2_retrieve_namespace_and_segment():
         "metadatas": [{"segment": "backend", "source_file": "x.txt"}],
     }
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -317,8 +317,8 @@ def test_layer2_retrieve_empty():
     mock_col = MagicMock()
     mock_col.get.return_value = {"documents": [], "metadatas": []}
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -331,8 +331,8 @@ def test_layer2_retrieve_no_filter():
     mock_col = MagicMock()
     mock_col.get.return_value = {"documents": [], "metadatas": []}
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -347,8 +347,8 @@ def test_layer2_retrieve_error():
     mock_col = MagicMock()
     mock_col.get.side_effect = RuntimeError("db error")
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -364,8 +364,8 @@ def test_layer2_truncates_long_snippets():
         "metadatas": [{"segment": "r", "source_file": "s.txt"}],
     }
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer2(palace_path="/fake")
@@ -387,8 +387,8 @@ def _mock_query_results(docs, metas, dists):
 
 def test_layer3_no_palace():
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer3(palace_path="/nonexistent/palace")
@@ -398,8 +398,8 @@ def test_layer3_no_palace():
 
 def test_layer3_search_raw_no_palace():
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent/palace"
         layer = Layer3(palace_path="/nonexistent/palace")
@@ -415,8 +415,8 @@ def test_layer3_search_with_results():
         [0.2],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -431,8 +431,8 @@ def test_layer3_search_no_results():
     mock_col = MagicMock()
     mock_col.query.return_value = _mock_query_results([], [], [])
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -449,8 +449,8 @@ def test_layer3_search_with_namespace_filter():
         [0.1],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -468,8 +468,8 @@ def test_layer3_search_with_room_filter():
         [0.1],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -487,8 +487,8 @@ def test_layer3_search_with_namespace_and_segment():
         [0.1],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -502,8 +502,8 @@ def test_layer3_search_error():
     mock_col = MagicMock()
     mock_col.query.side_effect = RuntimeError("search failed")
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -520,8 +520,8 @@ def test_layer3_search_truncates_long_docs():
         [0.1],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -538,8 +538,8 @@ def test_layer3_search_raw_returns_dicts():
         [0.3],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -560,8 +560,8 @@ def test_layer3_search_raw_with_filters():
         [0.1],
     )
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -575,8 +575,8 @@ def test_layer3_search_raw_error():
     mock_col = MagicMock()
     mock_col.query.side_effect = RuntimeError("fail")
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         layer = Layer3(palace_path="/fake")
@@ -592,7 +592,7 @@ def test_memory_stack_wake_up(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with patch("memovich.layers.MemovichConfig") as mock_cfg:
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
             palace_path="/nonexistent",
@@ -609,7 +609,7 @@ def test_memory_stack_wake_up_with_namespace(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with patch("memovich.layers.MemovichConfig") as mock_cfg:
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
             palace_path="/nonexistent",
@@ -626,8 +626,8 @@ def test_memory_stack_recall(tmp_path):
     identity_file.write_text("I am Atlas.")
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
@@ -644,8 +644,8 @@ def test_memory_stack_search(tmp_path):
     identity_file.write_text("I am Atlas.")
 
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", side_effect=Exception("missing")),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", side_effect=Exception("missing")),
     ):
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
@@ -661,7 +661,7 @@ def test_memory_stack_status(tmp_path):
     identity_file = tmp_path / "identity.txt"
     identity_file.write_text("I am Atlas.")
 
-    with patch("mempalace.layers.MempalaceConfig") as mock_cfg:
+    with patch("memovich.layers.MemovichConfig") as mock_cfg:
         mock_cfg.return_value.palace_path = "/nonexistent"
         stack = MemoryStack(
             palace_path="/nonexistent",
@@ -684,8 +684,8 @@ def test_memory_stack_status_with_palace(tmp_path):
     mock_col = MagicMock()
     mock_col.count.return_value = 42
     with (
-        patch("mempalace.layers.MempalaceConfig") as mock_cfg,
-        patch("mempalace.layers._get_collection", return_value=mock_col),
+        patch("memovich.layers.MemovichConfig") as mock_cfg,
+        patch("memovich.layers._get_collection", return_value=mock_col),
     ):
         mock_cfg.return_value.palace_path = "/fake"
         stack = MemoryStack(

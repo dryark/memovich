@@ -13,7 +13,7 @@ import pytest
 
 def _patch_mcp_server(monkeypatch, config, kg):
     """Patch the mcp_server module globals to use test fixtures."""
-    from mempalace import mcp_server
+    from memovich import mcp_server
 
     monkeypatch.setattr(mcp_server, "_config", config)
     monkeypatch.setattr(mcp_server, "_kg", kg)
@@ -21,7 +21,7 @@ def _patch_mcp_server(monkeypatch, config, kg):
 
 def _ensure_collection(palace_path, config, create=False):
     """Open the test palace collection via the configured vector backend."""
-    from mempalace.palace import get_collection
+    from memovich.palace import get_collection
 
     return get_collection(palace_path, create=create, config=config)
 
@@ -31,14 +31,14 @@ def _ensure_collection(palace_path, config, create=False):
 
 class TestHandleRequest:
     def test_initialize(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "initialize", "id": 1, "params": {}})
-        assert resp["result"]["serverInfo"]["name"] == "mempalace"
+        assert resp["result"]["serverInfo"]["name"] == "memovich"
         assert resp["id"] == 1
 
     def test_initialize_negotiates_client_version(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request(
             {
@@ -50,7 +50,7 @@ class TestHandleRequest:
         assert resp["result"]["protocolVersion"] == "2025-11-25"
 
     def test_initialize_negotiates_older_supported_version(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request(
             {
@@ -62,7 +62,7 @@ class TestHandleRequest:
         assert resp["result"]["protocolVersion"] == "2025-03-26"
 
     def test_initialize_unknown_version_falls_back_to_latest(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request(
             {
@@ -71,58 +71,58 @@ class TestHandleRequest:
                 "params": {"protocolVersion": "9999-12-31"},
             }
         )
-        from mempalace.mcp_server import SUPPORTED_PROTOCOL_VERSIONS
+        from memovich.mcp_server import SUPPORTED_PROTOCOL_VERSIONS
 
         assert resp["result"]["protocolVersion"] == SUPPORTED_PROTOCOL_VERSIONS[0]
 
     def test_initialize_missing_version_uses_oldest(self):
-        from mempalace.mcp_server import handle_request, SUPPORTED_PROTOCOL_VERSIONS
+        from memovich.mcp_server import handle_request, SUPPORTED_PROTOCOL_VERSIONS
 
         resp = handle_request({"method": "initialize", "id": 1, "params": {}})
         assert resp["result"]["protocolVersion"] == SUPPORTED_PROTOCOL_VERSIONS[-1]
 
     def test_notifications_initialized_returns_none(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "notifications/initialized", "id": None, "params": {}})
         assert resp is None
 
     def test_ping_returns_empty_result(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "ping", "id": 11, "params": {}})
         assert resp["id"] == 11
         assert resp["result"] == {}
 
     def test_tools_list(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "tools/list", "id": 2, "params": {}})
         tools = resp["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert "mempalace_status" in names
-        assert "mempalace_search" in names
-        assert "mempalace_add_chunk" in names
-        assert "mempalace_kg_add" in names
+        assert "memovich_status" in names
+        assert "memovich_search" in names
+        assert "memovich_add_chunk" in names
+        assert "memovich_kg_add" in names
 
     def test_null_arguments_does_not_hang(self, monkeypatch, config, palace_path, seeded_kg):
         """Sending arguments: null should return a result, not hang (#394)."""
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         _ensure_collection(palace_path, config, create=True)
         resp = handle_request(
             {
                 "method": "tools/call",
                 "id": 10,
-                "params": {"name": "mempalace_status", "arguments": None},
+                "params": {"name": "memovich_status", "arguments": None},
             }
         )
         assert "error" not in resp
         assert resp["result"] is not None
 
     def test_unknown_tool(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request(
             {
@@ -134,14 +134,14 @@ class TestHandleRequest:
         assert resp["error"]["code"] == -32601
 
     def test_unknown_method(self):
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "unknown/method", "id": 4, "params": {}})
         assert resp["error"]["code"] == -32601
 
     def test_any_notification_returns_none(self):
         """All notifications/* methods should return None (no response)."""
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         for method in [
             "notifications/initialized",
@@ -154,14 +154,14 @@ class TestHandleRequest:
 
     def test_unknown_method_no_id_returns_none(self):
         """Messages without id (notifications) must never get a response."""
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         resp = handle_request({"method": "unknown/thing", "params": {}})
         assert resp is None
 
     def test_malformed_method_none(self):
         """method=None or missing should not crash."""
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         # Explicit None
         resp = handle_request({"method": None, "params": {}})
@@ -177,7 +177,7 @@ class TestHandleRequest:
 
     def test_tools_call_dispatches(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import handle_request
+        from memovich.mcp_server import handle_request
 
         # Create a collection so status works
         _ensure_collection(palace_path, config, create=True)
@@ -186,7 +186,7 @@ class TestHandleRequest:
             {
                 "method": "tools/call",
                 "id": 5,
-                "params": {"name": "mempalace_status", "arguments": {}},
+                "params": {"name": "memovich_status", "arguments": {}},
             }
         )
         assert "result" in resp
@@ -201,7 +201,7 @@ class TestReadTools:
     def test_status_empty_palace(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_status
+        from memovich.mcp_server import tool_status
 
         result = tool_status()
         assert result["total_chunks"] == 0
@@ -209,7 +209,7 @@ class TestReadTools:
 
     def test_status_with_data(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_status
+        from memovich.mcp_server import tool_status
 
         result = tool_status()
         assert result["total_chunks"] == 4
@@ -218,7 +218,7 @@ class TestReadTools:
 
     def test_list_namespaces(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_namespaces
+        from memovich.mcp_server import tool_list_namespaces
 
         result = tool_list_namespaces()
         assert result["namespaces"]["project"] == 3
@@ -226,7 +226,7 @@ class TestReadTools:
 
     def test_list_segments_all(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_segments
+        from memovich.mcp_server import tool_list_segments
 
         result = tool_list_segments()
         assert "backend" in result["segments"]
@@ -235,7 +235,7 @@ class TestReadTools:
 
     def test_list_segments_filtered(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_segments
+        from memovich.mcp_server import tool_list_segments
 
         result = tool_list_segments(namespace="project")
         assert "backend" in result["segments"]
@@ -243,7 +243,7 @@ class TestReadTools:
 
     def test_get_taxonomy(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_taxonomy
+        from memovich.mcp_server import tool_get_taxonomy
 
         result = tool_get_taxonomy()
         assert result["taxonomy"]["project"]["backend"] == 2
@@ -252,10 +252,10 @@ class TestReadTools:
 
     def test_no_palace_returns_error(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda create=False: None)
-        from mempalace.mcp_server import tool_status
+        from memovich.mcp_server import tool_status
 
         result = tool_status()
         assert "error" in result
@@ -267,7 +267,7 @@ class TestReadTools:
 class TestSearchTool:
     def test_search_basic(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_search
+        from memovich.mcp_server import tool_search
 
         result = tool_search(query="JWT authentication tokens")
         assert "results" in result
@@ -280,7 +280,7 @@ class TestSearchTool:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_search
+        from memovich.mcp_server import tool_search
 
         result = tool_search(query="planning", namespace="notes")
         assert all(r["namespace"] == "notes" for r in result["results"])
@@ -289,7 +289,7 @@ class TestSearchTool:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_search
+        from memovich.mcp_server import tool_search
 
         result = tool_search(query="database", segment="backend")
         assert all(r["segment"] == "backend" for r in result["results"])
@@ -299,7 +299,7 @@ class TestSearchTool:
     ):
         """Old min_similarity param still works via backwards-compat shim."""
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_search
+        from memovich.mcp_server import tool_search
 
         # Old name should work
         result = tool_search(query="JWT", min_similarity=1.5)
@@ -312,7 +312,7 @@ class TestSearchTool:
 
     def test_list_segments_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
@@ -321,7 +321,7 @@ class TestSearchTool:
 
     def test_search_rejects_invalid_segment(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "search_memories", lambda *args, **kwargs: pytest.fail())
 
@@ -330,7 +330,7 @@ class TestSearchTool:
 
     def test_list_chunks_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
@@ -339,7 +339,7 @@ class TestSearchTool:
 
     def test_find_tunnels_rejects_invalid_namespace(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda *args, **kwargs: pytest.fail())
 
@@ -348,7 +348,7 @@ class TestSearchTool:
 
     def test_wal_redacts_sensitive_fields(self, monkeypatch, config, kg, tmp_path):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         wal_file = tmp_path / "write_log.jsonl"
         monkeypatch.setattr(mcp_server, "_WAL_FILE", wal_file)
@@ -371,7 +371,7 @@ class TestWriteTools:
     def test_add_chunk(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_add_chunk
+        from memovich.mcp_server import tool_add_chunk
 
         result = tool_add_chunk(
             namespace="test_namespace",
@@ -386,7 +386,7 @@ class TestWriteTools:
     def test_add_chunk_duplicate_detection(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_add_chunk
+        from memovich.mcp_server import tool_add_chunk
 
         content = "This is a unique test memory about Rust ownership and borrowing."
         result1 = tool_add_chunk(namespace="w", segment="r", content=content)
@@ -400,7 +400,7 @@ class TestWriteTools:
         """Documents sharing a >100-char header must get distinct IDs (full-content hash)."""
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_add_chunk
+        from memovich.mcp_server import tool_add_chunk
 
         header = "# ACME Corp Knowledge Base\n**Project:** Alpha | **Team:** Backend | **Status:** Active\n\n"
         doc1 = (
@@ -420,7 +420,7 @@ class TestWriteTools:
 
     def test_delete_chunk(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_delete_chunk
+        from memovich.mcp_server import tool_delete_chunk
 
         result = tool_delete_chunk("chunk_proj_backend_aaa")
         assert result["success"] is True
@@ -428,14 +428,14 @@ class TestWriteTools:
 
     def test_delete_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_delete_chunk
+        from memovich.mcp_server import tool_delete_chunk
 
         result = tool_delete_chunk("nonexistent_chunk")
         assert result["success"] is False
 
     def test_check_duplicate(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_check_duplicate
+        from memovich.mcp_server import tool_check_duplicate
 
         # Exact match text from seeded_collection should be flagged
         result = tool_check_duplicate(
@@ -454,7 +454,7 @@ class TestWriteTools:
 
     def test_get_chunk(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_chunk
+        from memovich.mcp_server import tool_get_chunk
 
         result = tool_get_chunk("chunk_proj_backend_aaa")
         assert result["chunk_id"] == "chunk_proj_backend_aaa"
@@ -464,14 +464,14 @@ class TestWriteTools:
 
     def test_get_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_chunk
+        from memovich.mcp_server import tool_get_chunk
 
         result = tool_get_chunk("nonexistent_chunk")
         assert "error" in result
 
     def test_list_chunks(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_chunks
+        from memovich.mcp_server import tool_list_chunks
 
         result = tool_list_chunks()
         assert result["count"] == 4
@@ -481,7 +481,7 @@ class TestWriteTools:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_chunks
+        from memovich.mcp_server import tool_list_chunks
 
         result = tool_list_chunks(namespace="project")
         assert result["count"] == 3
@@ -491,7 +491,7 @@ class TestWriteTools:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_chunks
+        from memovich.mcp_server import tool_list_chunks
 
         result = tool_list_chunks(namespace="project", segment="backend")
         assert result["count"] == 2
@@ -499,7 +499,7 @@ class TestWriteTools:
 
     def test_list_chunks_pagination(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_chunks
+        from memovich.mcp_server import tool_list_chunks
 
         result = tool_list_chunks(limit=2, offset=0)
         assert result["count"] == 2
@@ -510,14 +510,14 @@ class TestWriteTools:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_list_chunks
+        from memovich.mcp_server import tool_list_chunks
 
         result = tool_list_chunks(offset=-5)
         assert result["offset"] == 0
 
     def test_update_chunk_content(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_get_chunk, tool_update_chunk
+        from memovich.mcp_server import tool_get_chunk, tool_update_chunk
 
         result = tool_update_chunk("chunk_proj_backend_aaa", content="Updated content about auth.")
         assert result["success"] is True
@@ -529,7 +529,7 @@ class TestWriteTools:
         self, monkeypatch, config, palace_path, seeded_collection, kg
     ):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_chunk
+        from memovich.mcp_server import tool_update_chunk
 
         result = tool_update_chunk(
             "chunk_proj_backend_aaa", namespace="new_namespace", segment="new_segment"
@@ -540,14 +540,14 @@ class TestWriteTools:
 
     def test_update_chunk_not_found(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_chunk
+        from memovich.mcp_server import tool_update_chunk
 
         result = tool_update_chunk("nonexistent_chunk", content="hello")
         assert result["success"] is False
 
     def test_update_chunk_noop(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_update_chunk
+        from memovich.mcp_server import tool_update_chunk
 
         result = tool_update_chunk("chunk_proj_backend_aaa")
         assert result["success"] is True
@@ -560,7 +560,7 @@ class TestWriteTools:
 class TestKGTools:
     def test_kg_add(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace.mcp_server import tool_kg_add
+        from memovich.mcp_server import tool_kg_add
 
         result = tool_kg_add(
             subject="Alice",
@@ -572,14 +572,14 @@ class TestKGTools:
 
     def test_kg_query(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import tool_kg_query
+        from memovich.mcp_server import tool_kg_query
 
         result = tool_kg_query(entity="Max")
         assert result["count"] > 0
 
     def test_kg_invalidate(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import tool_kg_invalidate
+        from memovich.mcp_server import tool_kg_invalidate
 
         result = tool_kg_invalidate(
             subject="Max",
@@ -591,14 +591,14 @@ class TestKGTools:
 
     def test_kg_timeline(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import tool_kg_timeline
+        from memovich.mcp_server import tool_kg_timeline
 
         result = tool_kg_timeline(entity="Alice")
         assert result["count"] > 0
 
     def test_kg_stats(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, seeded_kg)
-        from mempalace.mcp_server import tool_kg_stats
+        from memovich.mcp_server import tool_kg_stats
 
         result = tool_kg_stats()
         assert result["entities"] >= 4
@@ -611,7 +611,7 @@ class TestDiaryTools:
     def test_diary_write_and_read(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_diary_write, tool_diary_read
+        from memovich.mcp_server import tool_diary_write, tool_diary_read
 
         w = tool_diary_write(
             agent_name="TestAgent",
@@ -629,7 +629,7 @@ class TestDiaryTools:
     def test_diary_read_empty(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace.mcp_server import tool_diary_read
+        from memovich.mcp_server import tool_diary_read
 
         r = tool_diary_read(agent_name="Nobody")
         assert r["entries"] == []
@@ -643,7 +643,7 @@ class TestCacheInvalidation:
 
     def test_storage_signature_change_refreshes_cache(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         _n = [0]
 
@@ -663,7 +663,7 @@ class TestCacheInvalidation:
     def test_reconnect_reports_failure_when_no_palace(self, monkeypatch, config, kg):
         """tool_reconnect should report failure when no collection is available."""
         _patch_mcp_server(monkeypatch, config, kg)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         monkeypatch.setattr(mcp_server, "_get_collection", lambda create=False: None)
 
@@ -676,7 +676,7 @@ class TestCacheInvalidation:
         """tool_reconnect should report success with chunk count."""
         _patch_mcp_server(monkeypatch, config, kg)
         _ensure_collection(palace_path, config, create=True)
-        from mempalace import mcp_server
+        from memovich import mcp_server
 
         result = mcp_server.tool_reconnect()
         assert result["success"] is True
