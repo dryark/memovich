@@ -1,12 +1,12 @@
 [project]
 name = "memovich"
-version = "3.2.0"
-description = "Give your AI a memory — mine projects and conversations into a searchable palace. No API key required."
+version = "0.0.1"
+description = "AI Memory System"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [
-    {name = "milla-jovovich"},
+    {name = "David Helkowski"},
 ]
 keywords = [
     "ai", "memory", "llm", "rag", "postgres", "pgvector", "mcp",
@@ -32,9 +32,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/milla-jovovich/memovich"
-Repository = "https://github.com/milla-jovovich/memovich"
-"Bug Tracker" = "https://github.com/milla-jovovich/memovich/issues"
+Homepage = "https://github.com/dryark/memovich"
+Repository = "https://github.com/dryark/memovich"
+"Bug Tracker" = "https://github.com/dryark/memovich/issues"
 
 [project.scripts]
 memovich = "memovich:main"
